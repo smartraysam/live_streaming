@@ -36,7 +36,7 @@ func TestPurchaseTicket(t *testing.T) {
 		t.Fatalf("create stream: %v", err)
 	}
 	all, _ := streamSvc.ListAll(context.Background())
-	svc := NewService(store, streamSvc, &fakeLaravel{})
+	svc := NewService(store, streamSvc, &fakeLaravel{}, nil)
 	if _, err := svc.Purchase(context.Background(), all[0].StreamID, "viewer_1"); err != nil {
 		t.Fatalf("purchase ticket: %v", err)
 	}

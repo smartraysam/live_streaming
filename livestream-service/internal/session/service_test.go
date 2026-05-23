@@ -26,7 +26,7 @@ func (f *fakeLaravel) NotifyUser(ctx context.Context, userID, eventType string, 
 func TestAcceptSessionInvite(t *testing.T) {
 	store := db.NewStore("streams", "chat", "tickets")
 	streamSvc := stream.NewService(store, &stream.MockIVS{})
-	svc := NewService(store, streamSvc, &fakeLaravel{})
+	svc := NewService(store, streamSvc, &fakeLaravel{}, nil)
 
 	st, err := svc.Create(context.Background(), "creator_1", CreateSessionRequest{
 		Title:           "private",

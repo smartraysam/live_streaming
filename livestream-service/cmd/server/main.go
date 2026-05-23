@@ -17,6 +17,7 @@ import (
 	"github.com/yourorg/livestream-service/internal/chat"
 	"github.com/yourorg/livestream-service/internal/config"
 	"github.com/yourorg/livestream-service/internal/db"
+	"github.com/yourorg/livestream-service/internal/events"
 	"github.com/yourorg/livestream-service/internal/middleware"
 	"github.com/yourorg/livestream-service/internal/payment"
 	"github.com/yourorg/livestream-service/internal/recording"
@@ -42,16 +43,40 @@ func main() {
 	}
 
 	logger := log.With().Str("service", "livestream").Logger()
-	store := db.NewStore(cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	store, err := db.NewStoreWithDynamo(context.Background(), cfg.AWSRegion, cfg.AWSEndpointURL, cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to initialize DynamoDB store, using in-memory fallback")
+		store = db.NewStore(cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	}
 	laravelClient := laravel.New(cfg.LaravelInternalURL, cfg.LaravelInternalSecret)
 	authMW := middleware.NewAuth(laravelClient)
-	ivs := &stream.MockIVS{}
+	var ivs stream.IVSClient = &stream.MockIVS{}
+	if !cfg.UseMockIVS {
+		awsIVS, err := stream.NewAWSIVS(context.Background(), cfg.AWSRegion)
+		if err != nil {
+			logger.Warn().Err(err).Msg("failed to initialize AWS IVS client, using mock")
+		} else {
+			ivs = awsIVS
+		}
+	} else {
+		logger.Info().Msg("USE_MOCK_IVS enabled, skipping AWS IVS client")
+	}
+
+	var eventPublisher events.Publisher = events.NoopPublisher{}
+	if cfg.SQSQueueURL != "" {
+		sqsPublisher, err := events.NewSQSPublisher(context.Background(), cfg.AWSRegion, cfg.AWSEndpointURL, cfg.SQSQueueURL)
+		if err != nil {
+			logger.Warn().Err(err).Msg("failed to initialize SQS publisher, events disabled")
+		} else {
+			eventPublisher = sqsPublisher
+		}
+	}
 
 	streamSvc := stream.NewService(store, ivs)
 	hubs := &chat.HubManager{}
-	sessionSvc := session.NewService(store, streamSvc, laravelClient)
-	paymentSvc := payment.NewService(store, streamSvc, laravelClient, hubs)
-	ticketSvc := ticket.NewService(store, streamSvc, laravelClient)
+	sessionSvc := session.NewService(store, streamSvc, laravelClient, eventPublisher)
+	paymentSvc := payment.NewService(store, streamSvc, laravelClient, hubs, eventPublisher)
+	ticketSvc := ticket.NewService(store, streamSvc, laravelClient, eventPublisher)
 	recordingSvc := recording.NewService(store, streamSvc, hubs)
 
 	streamH := stream.NewHandler(streamSvc)

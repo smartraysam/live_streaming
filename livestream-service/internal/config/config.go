@@ -12,6 +12,8 @@ type Config struct {
 	Port                  string
 	Env                   string
 	AWSRegion             string
+	AWSEndpointURL        string
+	UseMockIVS            bool
 	DynamoTableStreams    string
 	DynamoTableChat       string
 	DynamoTableTickets    string
@@ -45,6 +47,8 @@ func Load() (*Config, error) {
 		Port:                  viper.GetString("PORT"),
 		Env:                   viper.GetString("ENV"),
 		AWSRegion:             viper.GetString("AWS_REGION"),
+		AWSEndpointURL:        viper.GetString("AWS_ENDPOINT_URL"),
+		UseMockIVS:            viper.GetBool("USE_MOCK_IVS"),
 		DynamoTableStreams:    viper.GetString("DYNAMODB_TABLE_STREAMS"),
 		DynamoTableChat:       viper.GetString("DYNAMODB_TABLE_CHAT"),
 		DynamoTableTickets:    viper.GetString("DYNAMODB_TABLE_TICKETS"),

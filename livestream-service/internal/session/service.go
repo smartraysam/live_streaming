@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yourorg/livestream-service/internal/db"
+	"github.com/yourorg/livestream-service/internal/events"
 	"github.com/yourorg/livestream-service/internal/stream"
 	"github.com/yourorg/livestream-service/pkg/laravel"
 )
@@ -14,10 +15,14 @@ type Service struct {
 	store   *db.Store
 	streams *stream.Service
 	api     laravel.Client
+	events  events.Publisher
 }
 
-func NewService(store *db.Store, streams *stream.Service, api laravel.Client) *Service {
-	return &Service{store: store, streams: streams, api: api}
+func NewService(store *db.Store, streams *stream.Service, api laravel.Client, eventPublisher events.Publisher) *Service {
+	if eventPublisher == nil {
+		eventPublisher = events.NoopPublisher{}
+	}
+	return &Service{store: store, streams: streams, api: api, events: eventPublisher}
 }
 
 func (s *Service) Create(ctx context.Context, creatorID string, req CreateSessionRequest) (*stream.Stream, error) {
@@ -73,5 +78,13 @@ func (s *Service) Accept(ctx context.Context, sessionID, viewerID string) error 
 	if charge.Status != "success" {
 		return fmt.Errorf("payment_%s", charge.Status)
 	}
-	return s.store.GrantTicket(ctx, sessionID, viewerID, time.Now().Add(48*time.Hour))
+	if err := s.store.GrantTicket(ctx, sessionID, viewerID, time.Now().Add(48*time.Hour)); err != nil {
+		return err
+	}
+	_ = s.events.Publish(ctx, "session_accepted", map[string]string{
+		"stream_id":      sessionID,
+		"viewer_user_id": viewerID,
+		"transaction_id": charge.TransactionID,
+	})
+	return nil
 }

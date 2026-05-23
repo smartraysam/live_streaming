@@ -7,6 +7,7 @@ import (
 
 	"github.com/yourorg/livestream-service/internal/chat"
 	"github.com/yourorg/livestream-service/internal/db"
+	"github.com/yourorg/livestream-service/internal/events"
 	"github.com/yourorg/livestream-service/internal/stream"
 	"github.com/yourorg/livestream-service/pkg/laravel"
 )
@@ -16,10 +17,14 @@ type Service struct {
 	streams *stream.Service
 	api     laravel.Client
 	hubs    *chat.HubManager
+	events  events.Publisher
 }
 
-func NewService(store *db.Store, streams *stream.Service, api laravel.Client, hubs *chat.HubManager) *Service {
-	return &Service{store: store, streams: streams, api: api, hubs: hubs}
+func NewService(store *db.Store, streams *stream.Service, api laravel.Client, hubs *chat.HubManager, eventPublisher events.Publisher) *Service {
+	if eventPublisher == nil {
+		eventPublisher = events.NoopPublisher{}
+	}
+	return &Service{store: store, streams: streams, api: api, hubs: hubs, events: eventPublisher}
 }
 
 func (s *Service) Tip(ctx context.Context, streamID, payerID, msg string, amount float64) (*laravel.ChargeResponse, error) {
@@ -55,5 +60,11 @@ func (s *Service) Tip(ctx context.Context, streamID, payerID, msg string, amount
 	if hub := s.hubs.GetOrCreate(streamID, st.StreamType == "private", st.CreatorID); hub != nil {
 		hub.Publish(chat.Message{Type: "tip_alert", UserID: payerID, Body: msg, AmountUSD: amount, SentAt: time.Now().UTC()})
 	}
+	_ = s.events.Publish(ctx, "tip", map[string]string{
+		"stream_id":      streamID,
+		"transaction_id": charge.TransactionID,
+		"sender_id":      payerID,
+		"creator_id":     st.CreatorID,
+	})
 	return charge, nil
 }

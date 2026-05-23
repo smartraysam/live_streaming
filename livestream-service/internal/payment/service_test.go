@@ -31,7 +31,7 @@ func TestTip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create stream: %v", err)
 	}
-	svc := NewService(store, streamSvc, &fakeLaravel{}, &chat.HubManager{})
+	svc := NewService(store, streamSvc, &fakeLaravel{}, &chat.HubManager{}, nil)
 	resp, err := svc.Tip(context.Background(), st.StreamID, "viewer_1", "great", 2)
 	if err != nil {
 		t.Fatalf("tip: %v", err)
