@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/yourorg/livestream-service/internal/middleware"
-	"github.com/yourorg/livestream-service/pkg/api"
+	"github.com/smartraysam/livestream-service/internal/middleware"
+	"github.com/smartraysam/livestream-service/pkg/api"
 )
 
 type Handler struct {

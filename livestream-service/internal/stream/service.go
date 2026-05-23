@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yourorg/livestream-service/internal/db"
+	"github.com/smartraysam/livestream-service/internal/db"
 )
 
 type Service struct {

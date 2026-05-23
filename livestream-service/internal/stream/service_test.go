@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yourorg/livestream-service/internal/db"
+	"github.com/smartraysam/livestream-service/internal/db"
 )
 
 func TestCreateStream(t *testing.T) {

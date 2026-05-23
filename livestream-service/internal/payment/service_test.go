@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yourorg/livestream-service/internal/chat"
-	"github.com/yourorg/livestream-service/internal/db"
-	"github.com/yourorg/livestream-service/internal/stream"
-	"github.com/yourorg/livestream-service/pkg/laravel"
+	"github.com/smartraysam/livestream-service/internal/chat"
+	"github.com/smartraysam/livestream-service/internal/db"
+	"github.com/smartraysam/livestream-service/internal/stream"
+	"github.com/smartraysam/livestream-service/pkg/laravel"
 )
 
 type fakeLaravel struct{}

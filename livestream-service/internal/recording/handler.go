@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/yourorg/livestream-service/internal/config"
-	"github.com/yourorg/livestream-service/internal/middleware"
-	"github.com/yourorg/livestream-service/internal/stream"
-	"github.com/yourorg/livestream-service/internal/ticket"
-	"github.com/yourorg/livestream-service/pkg/api"
+	"github.com/smartraysam/livestream-service/internal/config"
+	"github.com/smartraysam/livestream-service/internal/middleware"
+	"github.com/smartraysam/livestream-service/internal/stream"
+	"github.com/smartraysam/livestream-service/internal/ticket"
+	"github.com/smartraysam/livestream-service/pkg/api"
 )
 
 type IVSEvent struct {

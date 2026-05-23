@@ -1,4 +1,4 @@
-module github.com/yourorg/livestream-service
+module github.com/smartraysam/livestream-service
 
 go 1.24
 

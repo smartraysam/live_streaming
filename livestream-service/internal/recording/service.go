@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/yourorg/livestream-service/internal/chat"
-	"github.com/yourorg/livestream-service/internal/db"
-	"github.com/yourorg/livestream-service/internal/stream"
+	"github.com/smartraysam/livestream-service/internal/chat"
+	"github.com/smartraysam/livestream-service/internal/db"
+	"github.com/smartraysam/livestream-service/internal/stream"
 )
 
 type Service struct {

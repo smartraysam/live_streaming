@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourorg/livestream-service/pkg/api"
-	"github.com/yourorg/livestream-service/pkg/laravel"
+	"github.com/smartraysam/livestream-service/pkg/api"
+	"github.com/smartraysam/livestream-service/pkg/laravel"
 )
 
 type contextKey string
