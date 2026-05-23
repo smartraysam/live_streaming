@@ -1,0 +1,554 @@
+basePath: /api/v1
+definitions:
+  api.ErrorResponse:
+    properties:
+      data:
+        type: string
+      error:
+        type: string
+    type: object
+  api.Response:
+    properties:
+      data: {}
+      error:
+        type: string
+    type: object
+  payment.TipRequest:
+    properties:
+      amount_usd:
+        example: 5
+        type: number
+      message:
+        example: great stream
+        type: string
+    type: object
+  recording.IVSEvent:
+    properties:
+      recording_s3_key:
+        example: recordings/file.mp4
+        type: string
+      stream_id:
+        example: 1c95b9af-0f52-469b-9fa6-7d7375f26de8
+        type: string
+      type:
+        example: Stream Start
+        type: string
+    type: object
+  session.CreateSessionRequest:
+    properties:
+      description:
+        example: Private mentoring
+        type: string
+      invited_viewer_id:
+        example: user_456
+        type: string
+      price_usd:
+        example: 20
+        type: number
+      title:
+        example: 1:1 coaching
+        type: string
+    type: object
+  stream.CreateStreamRequest:
+    properties:
+      description:
+        example: Tonight we build together
+        type: string
+      invited_viewer_id:
+        example: user_456
+        type: string
+      is_paid:
+        example: true
+        type: boolean
+      stream_type:
+        example: broadcast
+        type: string
+      ticket_price_usd:
+        example: 5
+        type: number
+      title:
+        example: My live show
+        type: string
+    type: object
+  stream.UpdateStreamRequest:
+    properties:
+      description:
+        example: Updated description
+        type: string
+      is_paid:
+        example: false
+        type: boolean
+      ticket_price_usd:
+        example: 0
+        type: number
+      title:
+        example: Updated title
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Live streaming microservice - supports broadcast (1-to-many) and private
+    (1-to-1) streams, live chat, tipping, and ticketed access.
+  title: Livestream Service API
+  version: "1.0"
+paths:
+  /sessions:
+    post:
+      consumes:
+      - application/json
+      description: Creates a private LOW_LATENCY stream and assigns invited viewer.
+      parameters:
+      - description: Session config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/session.CreateSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create private session
+      tags:
+      - Sessions
+  /sessions/{id}/accept:
+    post:
+      description: Charges session fee and grants playback ticket.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Accept session invite
+      tags:
+      - Sessions
+  /sessions/{id}/decline:
+    post:
+      description: Marks invite as declined.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - BearerAuth: []
+      summary: Decline session invite
+      tags:
+      - Sessions
+  /sessions/{id}/invite:
+    post:
+      description: Notifies a viewer about private session invite.
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - BearerAuth: []
+      summary: Invite viewer
+      tags:
+      - Sessions
+  /sessions/incoming:
+    get:
+      description: Returns pending private sessions for the viewer.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - BearerAuth: []
+      summary: List incoming invites
+      tags:
+      - Sessions
+  /streams:
+    get:
+      description: Lists live broadcast streams in descending order by viewer count.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      summary: List live streams
+      tags:
+      - Streams
+    post:
+      consumes:
+      - application/json
+      description: Creates an IVS channel. Set stream_type to "broadcast" for 1-to-many
+        or "private" for 1-to-1.
+      parameters:
+      - description: Stream config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/stream.CreateStreamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create stream
+      tags:
+      - Streams
+  /streams/{id}:
+    delete:
+      description: Deletes IVS channel and stream metadata.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete stream
+      tags:
+      - Streams
+    get:
+      description: Returns stream metadata for the given stream id.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get stream
+      tags:
+      - Streams
+    patch:
+      consumes:
+      - application/json
+      description: Updates title, description, paid settings.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/stream.UpdateStreamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update stream
+      tags:
+      - Streams
+  /streams/{id}/chat:
+    get:
+      description: Upgrades HTTP to websocket and subscribes user to stream chat.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "101":
+          description: Switching Protocols
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Connect chat websocket
+      tags:
+      - Chat
+  /streams/{id}/chat/history:
+    get:
+      description: Returns recent chat messages for a stream.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - BearerAuth: []
+      summary: Get chat history
+      tags:
+      - Chat
+  /streams/{id}/playback:
+    get:
+      description: Returns signed playback URL for viewer after invite/ticket checks.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get playback URL
+      tags:
+      - Streams
+  /streams/{id}/recording:
+    get:
+      description: Returns CloudFront recording URL for a stream.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get recording
+      tags:
+      - Recording
+  /streams/{id}/ticket/purchase:
+    post:
+      description: Charges viewer and grants stream ticket on success.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Purchase ticket
+      tags:
+      - Tickets
+  /streams/{id}/ticket/verify:
+    get:
+      description: Checks if viewer owns valid stream ticket.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - BearerAuth: []
+      summary: Verify ticket
+      tags:
+      - Tickets
+  /streams/{id}/tip:
+    post:
+      consumes:
+      - application/json
+      description: Charges viewer and emits tip alert event to chat.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Tip payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/payment.TipRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Send tip
+      tags:
+      - Payments
+  /streams/creator/{creator_id}:
+    get:
+      description: Lists live and past streams for a creator.
+      parameters:
+      - description: Creator ID
+        in: path
+        name: creator_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+      summary: List creator streams
+      tags:
+      - Streams
+  /webhooks/ivs:
+    post:
+      consumes:
+      - application/json
+      description: Receives stream lifecycle and recording events from IVS.
+      parameters:
+      - description: Webhook secret
+        in: header
+        name: X-IVS-Secret
+        required: true
+        type: string
+      - description: Event payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/recording.IVSEvent'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: IVS webhook
+      tags:
+      - Recording
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

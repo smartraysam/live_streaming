@@ -1,0 +1,112 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	httpSwagger "github.com/swaggo/http-swagger"
+	_ "github.com/yourorg/livestream-service/docs"
+	"github.com/yourorg/livestream-service/internal/chat"
+	"github.com/yourorg/livestream-service/internal/config"
+	"github.com/yourorg/livestream-service/internal/db"
+	"github.com/yourorg/livestream-service/internal/middleware"
+	"github.com/yourorg/livestream-service/internal/payment"
+	"github.com/yourorg/livestream-service/internal/recording"
+	"github.com/yourorg/livestream-service/internal/session"
+	"github.com/yourorg/livestream-service/internal/stream"
+	"github.com/yourorg/livestream-service/internal/ticket"
+	"github.com/yourorg/livestream-service/pkg/laravel"
+)
+
+// @title           Livestream Service API
+// @version         1.0
+// @description     Live streaming microservice - supports broadcast (1-to-many) and private (1-to-1) streams, live chat, tipping, and ticketed access.
+// @host            localhost:8080
+// @BasePath        /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+func main() {
+	zerolog.TimeFieldFormat = time.RFC3339
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load config")
+	}
+
+	logger := log.With().Str("service", "livestream").Logger()
+	store := db.NewStore(cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	laravelClient := laravel.New(cfg.LaravelInternalURL, cfg.LaravelInternalSecret)
+	authMW := middleware.NewAuth(laravelClient)
+	ivs := &stream.MockIVS{}
+
+	streamSvc := stream.NewService(store, ivs)
+	hubs := &chat.HubManager{}
+	sessionSvc := session.NewService(store, streamSvc, laravelClient)
+	paymentSvc := payment.NewService(store, streamSvc, laravelClient, hubs)
+	ticketSvc := ticket.NewService(store, streamSvc, laravelClient)
+	recordingSvc := recording.NewService(store, streamSvc, hubs)
+
+	streamH := stream.NewHandler(streamSvc)
+	sessionH := session.NewHandler(sessionSvc)
+	chatH := chat.NewHandler(store, streamSvc, hubs)
+	paymentH := payment.NewHandler(paymentSvc)
+	ticketH := ticket.NewHandler(ticketSvc)
+	recordingH := recording.NewHandler(cfg, recordingSvc, streamSvc, ticketSvc)
+
+	r := chi.NewRouter()
+	r.Use(chimw.Recoverer)
+	r.Use(middleware.Logger(logger))
+	r.Mount("/docs", httpSwagger.WrapHandler)
+
+	r.Route("/api/v1", func(api chi.Router) {
+		api.Get("/streams", streamH.ListStreams)
+		api.Get("/streams/{id}", streamH.GetStream)
+		api.Get("/streams/creator/{creator_id}", streamH.ListByCreator)
+		api.Post("/webhooks/ivs", recordingH.IVSWebhook)
+
+		api.Group(func(protected chi.Router) {
+			protected.Use(authMW.Require)
+			protected.Post("/streams", streamH.CreateStream)
+			protected.Get("/streams/{id}/playback", streamH.GetPlayback)
+			protected.Patch("/streams/{id}", streamH.UpdateStream)
+			protected.Delete("/streams/{id}", streamH.DeleteStream)
+			protected.Get("/streams/{id}/chat", chatH.Connect)
+			protected.Get("/streams/{id}/chat/history", chatH.History)
+			protected.Post("/streams/{id}/tip", paymentH.TipStream)
+			protected.Post("/streams/{id}/ticket/purchase", ticketH.PurchaseTicket)
+			protected.Get("/streams/{id}/ticket/verify", ticketH.VerifyTicket)
+			protected.Get("/streams/{id}/recording", recordingH.GetRecording)
+
+			protected.Post("/sessions", sessionH.CreateSession)
+			protected.Post("/sessions/{id}/invite", sessionH.InviteViewer)
+			protected.Get("/sessions/incoming", sessionH.IncomingInvites)
+			protected.Post("/sessions/{id}/accept", sessionH.AcceptInvite)
+			protected.Post("/sessions/{id}/decline", sessionH.DeclineInvite)
+		})
+	})
+
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
+	go func() {
+		logger.Info().Str("addr", srv.Addr).Msg("server started")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal().Err(err).Msg("server failed")
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+	<-quit
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+	logger.Info().Msg("server gracefully stopped")
+}
