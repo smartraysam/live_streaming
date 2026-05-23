@@ -2,6 +2,11 @@
 
 This sample React app demonstrates how to use the local Go livestream service.
 
+Workspace reference:
+
+- Backend service: ../livestream-service
+- Workspace root documentation: ../README.md
+
 ## What It Can Do
 
 - List live streams
@@ -47,15 +52,18 @@ The Vite dev server includes a proxy for /api to http://localhost:8080, so you c
 
 ## Local Workflow With Service
 
-1. Start LocalStack + Go service (from livestream-service project):
+1. Start LocalStack + Go service (from the livestream-service project):
 
+   cd ../livestream-service
    make local-up
    make local-init
    make local-run
 
-2. Start this React sample:
+2. Start this React sample in another terminal:
 
+   cd ../react-livestream-sample
    npm install
+   cp .env.example .env
    npm run dev
 
 3. Paste a JWT token in the app and test the flows.

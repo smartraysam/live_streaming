@@ -57,6 +57,17 @@ Notes:
 - AWS credentials (for real AWS mode)
 - Optional: aws CLI (used by local bootstrap script)
 
+## Development Commands
+
+- Start service directly: make run
+- Build binaries/check compile: make build
+- Run tests: make test
+- Regenerate Swagger docs: make docs
+- Start LocalStack dependencies: make local-up
+- Bootstrap local tables and queue: make local-init
+- Run service against LocalStack: make local-run
+- Stop and remove LocalStack state: make local-down
+
 ## Environment Variables
 
 Copy .env.example to .env and adjust values.
