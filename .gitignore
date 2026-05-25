@@ -2,3 +2,5 @@
 react-livestream-sample/node_modules/
 livestream-service/cloudfront-private-key.pem
 livestream-service/.env
+react/node_modules
+react/dist
