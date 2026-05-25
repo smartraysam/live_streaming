@@ -60,6 +60,7 @@ Notes:
 ## Development Commands
 
 - Start service directly: make run
+- Start service against real AWS: make run-real
 - Build binaries/check compile: make build
 - Run tests: make test
 - Regenerate Swagger docs: make docs
@@ -76,6 +77,7 @@ Core:
 
 - PORT: HTTP port (default 8080)
 - ENV: environment label, example development
+- ENABLE_AUTH: true/false, enable bearer token auth on protected livestream endpoints (default true)
 
 AWS:
 
@@ -130,9 +132,9 @@ This mode runs DynamoDB/SQS on LocalStack and uses mock IVS.
 1. Configure AWS credentials and region.
 2. Set real DynamoDB table names and SQS_QUEUE_URL.
 3. Set USE_MOCK_IVS=false.
-4. Start service:
+4. Start service with real AWS endpoints (no AWS endpoint override):
 
-   make run
+  make run-real
 
 ### 3) Mock-only local mode (fastest for UI/API testing)
 
@@ -140,8 +142,9 @@ Use this mode when you want to test the service and React sample without LocalSt
 
 1. Set `USE_MEMORY_STORE=true`.
 2. Set `USE_MOCK_IVS=true`.
-3. Point `LARAVEL_INTERNAL_URL` at a local mock or dev Laravel internal API.
-4. Start service:
+3. Set `ENABLE_AUTH=false` to bypass token verification during local testing (optional).
+4. Point `LARAVEL_INTERNAL_URL` at a local mock or dev Laravel internal API.
+5. Start service:
 
   go run ./cmd/server
 
@@ -186,6 +189,7 @@ Error:
 Streams:
 
 - POST /api/v1/streams
+- GET /api/v1/streams/{id}/ingest-info
 - GET /api/v1/streams
 - GET /api/v1/streams/{id}
 - GET /api/v1/streams/{id}/playback

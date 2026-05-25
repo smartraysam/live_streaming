@@ -27,6 +27,10 @@ const FOLLOWS = new Set(['viewer-1:creator-1']);
 // In-memory store for synced streams
 const syncedStreams = {};
 
+// In-memory store for paid stream access grants:
+// key format: "user_id:creator_id:stream_id"
+const PAID_ACCESS = new Set();
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -58,6 +62,16 @@ const server = http.createServer(async (req, res) => {
 
   // ── Payment charge ────────────────────────────────────────────────────────
   if (req.method === 'POST' && req.url === '/internal/payments/charge') {
+    const type = body.type;
+    const payer = body.payer_user_id;
+    const payee = body.payee_user_id;
+    const streamId = body.stream_id || body?.metadata?.stream_id;
+
+    // Persist paid access grants for ticket/session purchases.
+    if ((type === 'ticket' || type === 'session') && payer && payee && streamId) {
+      PAID_ACCESS.add(`${payer}:${payee}:${streamId}`);
+    }
+
     return respond(res, 200, {
       transaction_id: `txn-demo-${Date.now()}`,
       status: 'success',
@@ -70,15 +84,24 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Stream access check (for free / unlocked streams) ─────────────────────
-  // Body: { user_id, creator_id }
+  // Body: { user_id, creator_id, stream_id?, is_paid? }
   // Logic: allow if the user follows OR subscribes to the creator.
   if (req.method === 'POST' && req.url === '/internal/streams/access-check') {
-    const { user_id, creator_id } = body;
+    const { user_id, creator_id, stream_id, is_paid } = body;
     if (!user_id || !creator_id) return respond(res, 400, { error: 'missing_fields' });
 
     // Creator always has access to their own content
     if (user_id === creator_id) {
       return respond(res, 200, { can_access: true, reason: 'creator' });
+    }
+
+    // Paid streams require a successful prior charge for this user/creator/stream.
+    if (Boolean(is_paid) === true) {
+      const key = `${user_id}:${creator_id}:${stream_id || ''}`;
+      if (stream_id && PAID_ACCESS.has(key)) {
+        return respond(res, 200, { can_access: true, reason: 'ticket_paid' });
+      }
+      return respond(res, 200, { can_access: false, reason: 'payment_required' });
     }
 
     const followKey = `${user_id}:${creator_id}`;

@@ -112,14 +112,69 @@ func (h *Handler) GetPlayback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.Get(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stream_not_found")
+		return
+	}
 	// Check ticket ownership so paid-stream buyers can view their content.
 	hasTicket := h.store.HasTicket(r.Context(), streamID, user.UserID)
+	if st.IsPaid && !hasTicket && user.UserID != st.CreatorID {
+		resp, accessErr := h.laravel.CheckStreamAccess(r.Context(), laravel.StreamAccessRequest{
+			UserID:    user.UserID,
+			CreatorID: st.CreatorID,
+			StreamID:  st.StreamID,
+			IsPaid:    true,
+		})
+		if accessErr == nil && resp != nil && resp.CanAccess {
+			hasTicket = true
+		}
+	}
+
 	url, err := h.svc.CanViewPlayback(r.Context(), streamID, user.UserID, hasTicket)
 	if err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	writeData(w, http.StatusOK, PlaybackResponse{PlaybackURL: url})
+}
+
+// GetIngestInfo returns ingest endpoint and stream key for creator broadcasting.
+// @Summary      Get ingest info
+// @Description  Returns IVS ingest endpoint and stream key for OBS/RTMPS broadcasting. Creator only.
+// @Tags         Streams
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id   path      string  true  "Stream ID"
+// @Success      200  {object}  api.Response
+// @Failure      403  {object}  api.ErrorResponse
+// @Router       /streams/{id}/ingest-info [get]
+func (h *Handler) GetIngestInfo(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.Get(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stream_not_found")
+		return
+	}
+
+	if user.UserID != st.CreatorID {
+		writeError(w, http.StatusForbidden, "only_creator_can_view_ingest_info")
+		return
+	}
+
+	ingest, err := h.svc.GetIngestInfo(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeData(w, http.StatusOK, ingest)
 }
 
 // UpdateStream updates mutable stream fields.
@@ -223,19 +278,37 @@ func (h *Handler) AccessCheck(w http.ResponseWriter, r *http.Request) {
 	if st.IsPaid {
 		// Locked stream: the user must have bought a ticket.
 		hasTicket := h.store.HasTicket(r.Context(), streamID, user.UserID)
-		if !hasTicket {
+		if hasTicket {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"can_access": true,
+				"reason":     "ticket_holder",
+			})
+			return
+		}
+
+		resp, accessErr := h.laravel.CheckStreamAccess(r.Context(), laravel.StreamAccessRequest{
+			UserID:    user.UserID,
+			CreatorID: st.CreatorID,
+			StreamID:  st.StreamID,
+			IsPaid:    true,
+		})
+		if accessErr != nil {
+			writeError(w, http.StatusInternalServerError, "access_check_failed")
+			return
+		}
+		if !resp.CanAccess {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"can_access":       false,
-				"reason":           "payment_required",
+				"reason":           resp.Reason,
 				"ticket_price_usd": st.TicketPriceUSD,
 			})
 			return
 		}
 		writeData(w, http.StatusOK, map[string]interface{}{
 			"can_access": true,
-			"reason":     "ticket_holder",
+			"reason":     resp.Reason,
 		})
 		return
 	}
@@ -244,6 +317,8 @@ func (h *Handler) AccessCheck(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.laravel.CheckStreamAccess(r.Context(), laravel.StreamAccessRequest{
 		UserID:    user.UserID,
 		CreatorID: st.CreatorID,
+		StreamID:  st.StreamID,
+		IsPaid:    false,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "access_check_failed")

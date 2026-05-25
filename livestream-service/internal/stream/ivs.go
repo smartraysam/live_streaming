@@ -12,9 +12,10 @@ import (
 )
 
 type IVSChannel struct {
-	ChannelARN   string
-	PlaybackURL  string
-	StreamKeyARN string
+	ChannelARN     string
+	IngestEndpoint string
+	PlaybackURL    string
+	StreamKeyARN   string
 }
 
 type IVSClient interface {
@@ -51,9 +52,10 @@ func (a *AWSIVS) CreateChannel(ctx context.Context, name, channelType string) (*
 		return nil, fmt.Errorf("create IVS channel: %w", err)
 	}
 	return &IVSChannel{
-		ChannelARN:   aws.ToString(out.Channel.Arn),
-		PlaybackURL:  aws.ToString(out.Channel.PlaybackUrl),
-		StreamKeyARN: aws.ToString(out.StreamKey.Arn),
+		ChannelARN:     aws.ToString(out.Channel.Arn),
+		IngestEndpoint: aws.ToString(out.Channel.IngestEndpoint),
+		PlaybackURL:    aws.ToString(out.Channel.PlaybackUrl),
+		StreamKeyARN:   aws.ToString(out.StreamKey.Arn),
 	}, nil
 }
 
@@ -95,9 +97,10 @@ func (m *MockIVS) CreateChannel(ctx context.Context, name, channelType string) (
 	_ = ctx
 	id := uuid.NewString()
 	return &IVSChannel{
-		ChannelARN:   fmt.Sprintf("arn:aws:ivs:local:000000000000:channel/%s", id),
-		PlaybackURL:  fmt.Sprintf("https://playback.local/%s.m3u8", id),
-		StreamKeyARN: fmt.Sprintf("arn:aws:ivs:local:000000000000:stream-key/%s", id),
+		ChannelARN:     fmt.Sprintf("arn:aws:ivs:local:000000000000:channel/%s", id),
+		IngestEndpoint: fmt.Sprintf("%s.global-contribute.live-video.net", id),
+		PlaybackURL:    fmt.Sprintf("https://playback.local/%s.m3u8", id),
+		StreamKeyARN:   fmt.Sprintf("arn:aws:ivs:local:000000000000:stream-key/%s", id),
 	}, nil
 }
 

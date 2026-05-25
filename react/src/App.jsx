@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import videojs from 'video.js';
+import 'video.js/dist/video-js.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
-const WS_BASE = import.meta.env.VITE_WS_BASE || 'ws://localhost:8080/api/v1';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080/api/v1';
 
 function parseJsonSafe(text) {
   try {
@@ -11,557 +12,486 @@ function parseJsonSafe(text) {
   }
 }
 
+function VideoPlayer({ src }) {
+  const containerRef = useRef(null);
+  const playerRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current || playerRef.current) {
+      return;
+    }
+
+    const videoEl = document.createElement('video-js');
+    videoEl.className = 'video-js vjs-default-skin vjs-big-play-centered';
+    containerRef.current.appendChild(videoEl);
+
+    playerRef.current = videojs(videoEl, {
+      controls: true,
+      fluid: true,
+      responsive: true,
+      preload: 'auto'
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!playerRef.current) {
+      return;
+    }
+
+    if (!src) {
+      playerRef.current.pause();
+      playerRef.current.reset();
+      return;
+    }
+
+    playerRef.current.src({ src, type: 'application/x-mpegURL' });
+    playerRef.current.load();
+  }, [src]);
+
+  useEffect(() => {
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.dispose();
+        playerRef.current = null;
+      }
+    };
+  }, []);
+
+  return <div data-vjs-player ref={containerRef} className="videoPlayerHost" />;
+}
+
+function toRtmpsServer(ingestEndpoint) {
+  if (!ingestEndpoint) {
+    return '';
+  }
+  return `rtmps://${ingestEndpoint}:443/app/`;
+}
+
+function asActor(userId, role, username) {
+  return {
+    user_id: String(userId || '').trim(),
+    role: role || 'viewer',
+    username: String(username || '').trim()
+  };
+}
+
 export default function App() {
   const [token, setToken] = useState('');
-  const [view, setView] = useState('streams');
-  const [streams, setStreams] = useState([]);
-  const [selectedStreamId, setSelectedStreamId] = useState('');
-  const [playbackUrl, setPlaybackUrl] = useState('');
+  const [creatorId, setCreatorId] = useState('creator-1');
+  const [creatorName, setCreatorName] = useState('Creator');
+
+  const [streamForm, setStreamForm] = useState({
+    title: 'Broadcast Test Stream',
+    description: 'Live channel created from React app',
+    is_paid: false,
+    ticket_price_usd: 0
+  });
+
+  const [creatorStreams, setCreatorStreams] = useState([]);
+  const [selectedStream, setSelectedStream] = useState(null);
+  const [ingestInfo, setIngestInfo] = useState(null);
+
+  const [singleViewerId, setSingleViewerId] = useState('viewer-1');
+  const [singleViewerResult, setSingleViewerResult] = useState(null);
+
+  const [multiViewerInput, setMultiViewerInput] = useState('viewer-2, viewer-3, viewer-4');
+  const [multiViewerResults, setMultiViewerResults] = useState([]);
+
+  const [activePlaybackUrl, setActivePlaybackUrl] = useState('');
   const [status, setStatus] = useState('Ready.');
 
-  const [createForm, setCreateForm] = useState({
-    stream_type: 'broadcast',
-    title: 'Local Sample Stream',
-    description: 'Created from React local sample',
-    is_paid: false,
-    ticket_price_usd: 0,
-    invited_viewer_id: ''
-  });
+  const creatorActor = useMemo(
+    () => asActor(creatorId, 'creator', creatorName || creatorId),
+    [creatorId, creatorName]
+  );
 
-  const [tipAmount, setTipAmount] = useState('5');
-  const [tipMessage, setTipMessage] = useState('great stream!');
-
-  const [createSessionForm, setCreateSessionForm] = useState({
-    title: '1:1 Coaching Session',
-    description: 'Private session from React sample',
-    invited_viewer_id: '',
-    price_usd: 15
-  });
-  const [sessionActionId, setSessionActionId] = useState('');
-  const [sessionInviteViewerId, setSessionInviteViewerId] = useState('');
-  const [incomingSessions, setIncomingSessions] = useState([]);
-
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState('');
-  const [accessResult, setAccessResult] = useState(null);
-  const [syncResult, setSyncResult] = useState(null);
-  const wsRef = useRef(null);
-
-  const authHeaders = useMemo(() => {
-    if (!token.trim()) {
-      return {};
+  async function requestWithStatus(path, options = {}, actor = null) {
+    const headers = { ...(options.headers || {}) };
+    if (token.trim()) {
+      headers.Authorization = `Bearer ${token.trim()}`;
     }
-    return { Authorization: `Bearer ${token.trim()}` };
-  }, [token]);
+    if (actor?.user_id) {
+      headers['X-User-ID'] = actor.user_id;
+    }
+    if (actor?.role) {
+      headers['X-User-Role'] = actor.role;
+    }
+    if (actor?.username) {
+      headers['X-Username'] = actor.username;
+    }
+    if (options.body) {
+      headers['Content-Type'] = 'application/json';
+    }
 
-  async function request(path, options = {}, requireAuth = false) {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-      ...(requireAuth ? authHeaders : {})
-    };
-
-    const res = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers
     });
 
-    const text = await res.text();
+    const text = await response.text();
     const json = parseJsonSafe(text);
 
-    if (!res.ok) {
-      const msg = json?.error || `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-
-    return json;
-  }
-
-  async function listStreams() {
-    try {
-      setStatus('Loading streams...');
-      const json = await request('/streams');
-      setStreams(Array.isArray(json.data) ? json.data : []);
-      setStatus('Loaded streams.');
-    } catch (err) {
-      setStatus(`List streams failed: ${err.message}`);
-    }
-  }
-
-  async function createStream() {
-    try {
-      setStatus('Creating stream...');
-      const payload = {
-        ...createForm,
-        ticket_price_usd: Number(createForm.ticket_price_usd || 0)
-      };
-      const json = await request('/streams', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      }, true);
-      setStatus(`Created stream: ${json?.data?.stream_id || 'ok'}`);
-      await listStreams();
-    } catch (err) {
-      setStatus(`Create stream failed: ${err.message}`);
-    }
-  }
-
-  async function getPlayback() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    try {
-      setStatus('Fetching playback URL...');
-      const json = await request(`/streams/${selectedStreamId}/playback`, {}, true);
-      setPlaybackUrl(json?.data?.playback_url || '');
-      setStatus('Playback URL fetched.');
-    } catch (err) {
-      setStatus(`Playback request failed: ${err.message}`);
-    }
-  }
-
-  async function sendTip() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    try {
-      setStatus('Sending tip...');
-      await request(`/streams/${selectedStreamId}/tip`, {
-        method: 'POST',
-        body: JSON.stringify({ amount_usd: Number(tipAmount), message: tipMessage })
-      }, true);
-      setStatus('Tip request submitted.');
-    } catch (err) {
-      setStatus(`Tip failed: ${err.message}`);
-    }
-  }
-
-  async function purchaseTicket() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    try {
-      setStatus('Purchasing ticket...');
-      await request(`/streams/${selectedStreamId}/ticket/purchase`, { method: 'POST' }, true);
-      setStatus('Ticket purchase request succeeded.');
-    } catch (err) {
-      setStatus(`Ticket purchase failed: ${err.message}`);
-    }
-  }
-
-  async function verifyTicket() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    try {
-      setStatus('Verifying ticket...');
-      const json = await request(`/streams/${selectedStreamId}/ticket/verify`, {}, true);
-      setStatus(`Ticket verify result: ${json?.data?.has_ticket ? 'valid' : 'not found'}`);
-    } catch (err) {
-      setStatus(`Ticket verify failed: ${err.message}`);
-    }
-  }
-
-  async function createSession() {
-    try {
-      setStatus('Creating private session...');
-      const payload = {
-        ...createSessionForm,
-        price_usd: Number(createSessionForm.price_usd || 0)
-      };
-      const json = await request('/sessions', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      }, true);
-      const id = json?.data?.stream_id || json?.data?.id || 'ok';
-      setSessionActionId(id === 'ok' ? sessionActionId : id);
-      setStatus(`Session created: ${id}`);
-      await listStreams();
-    } catch (err) {
-      setStatus(`Create session failed: ${err.message}`);
-    }
-  }
-
-  async function inviteToSession() {
-    if (!sessionActionId.trim()) {
-      setStatus('Enter a session id first.');
-      return;
-    }
-    if (!sessionInviteViewerId.trim()) {
-      setStatus('Enter viewer id to invite.');
-      return;
-    }
-    try {
-      setStatus('Sending session invite...');
-      await request(`/sessions/${sessionActionId}/invite`, {
-        method: 'POST',
-        body: JSON.stringify({ viewer_id: sessionInviteViewerId })
-      }, true);
-      setStatus('Invite sent.');
-    } catch (err) {
-      setStatus(`Invite failed: ${err.message}`);
-    }
-  }
-
-  async function loadIncomingSessions() {
-    try {
-      setStatus('Loading incoming sessions...');
-      const json = await request('/sessions/incoming', {}, true);
-      setIncomingSessions(Array.isArray(json?.data) ? json.data : []);
-      setStatus('Incoming sessions loaded.');
-    } catch (err) {
-      setStatus(`Load incoming sessions failed: ${err.message}`);
-    }
-  }
-
-  async function acceptSession(sessionId) {
-    const id = (sessionId || sessionActionId).trim();
-    if (!id) {
-      setStatus('Enter a session id first.');
-      return;
-    }
-    try {
-      setStatus('Accepting session...');
-      await request(`/sessions/${id}/accept`, { method: 'POST' }, true);
-      setStatus('Session accepted.');
-      await loadIncomingSessions();
-    } catch (err) {
-      setStatus(`Accept session failed: ${err.message}`);
-    }
-  }
-
-  async function declineSession(sessionId) {
-    const id = (sessionId || sessionActionId).trim();
-    if (!id) {
-      setStatus('Enter a session id first.');
-      return;
-    }
-    try {
-      setStatus('Declining session...');
-      await request(`/sessions/${id}/decline`, { method: 'POST' }, true);
-      setStatus('Session declined.');
-      await loadIncomingSessions();
-    } catch (err) {
-      setStatus(`Decline session failed: ${err.message}`);
-    }
-  }
-
-  async function checkAccess() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    try {
-      setStatus('Checking stream access...');
-      const json = await request(`/streams/${selectedStreamId}/access`, {}, true);
-      setAccessResult(json?.data || json);
-      const d = json?.data || json;
-      setStatus(d?.can_access
-        ? `Access granted (${d.reason})`
-        : `Access denied (${d.reason})`);
-    } catch (err) {
-      setAccessResult({ can_access: false, reason: err.message });
-      setStatus(`Access check failed: ${err.message}`);
-    }
-  }
-
-  async function syncToLaravel() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    try {
-      setStatus('Syncing stream to Laravel...');
-      const json = await request(`/streams/${selectedStreamId}/sync`, { method: 'POST' }, true);
-      setSyncResult(json?.data || json);
-      setStatus(`Stream synced. Laravel ID: ${json?.data?.laravel_stream_id || 'ok'}`);
-    } catch (err) {
-      setSyncResult({ synced: false, error: err.message });
-      setStatus(`Sync failed: ${err.message}`);
-    }
-  }
-
-  function connectChat() {
-    if (!selectedStreamId.trim()) {
-      setStatus('Select or enter a stream id first.');
-      return;
-    }
-    if (!token.trim()) {
-      setStatus('A JWT token is required for chat connection.');
-      return;
-    }
-
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-
-    // Browser WebSocket does not allow custom headers, so the bearer token is
-    // appended as a query param. The Go middleware checks ?token= as a fallback.
-    const wsURL = `${WS_BASE}/streams/${selectedStreamId}/chat?token=${encodeURIComponent(token.trim())}`;
-    const ws = new WebSocket(wsURL);
-    wsRef.current = ws;
-
-    ws.onopen = () => setStatus('Chat connected.');
-    ws.onmessage = (event) => {
-      const payload = parseJsonSafe(event.data);
-      if (Array.isArray(payload)) {
-        setChatMessages(payload);
-        return;
-      }
-      setChatMessages((prev) => [...prev, payload]);
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: json?.data,
+      error: json?.error,
+      raw: json
     };
-    ws.onerror = () => setStatus('Chat socket error.');
-    ws.onclose = () => setStatus('Chat disconnected.');
   }
 
-  function disconnectChat() {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-      setStatus('Chat disconnected.');
+  async function createBroadcastChannel() {
+    if (!creatorActor.user_id) {
+      setStatus('Set creator id first.');
+      return;
+    }
+
+    try {
+      setStatus('Creating broadcast stream channel...');
+      const payload = {
+        stream_type: 'broadcast',
+        title: streamForm.title,
+        description: streamForm.description,
+        is_paid: Boolean(streamForm.is_paid),
+        ticket_price_usd: Number(streamForm.ticket_price_usd || 0)
+      };
+
+      const result = await requestWithStatus('/streams', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }, creatorActor);
+
+      if (!result.ok) {
+        throw new Error(result.error || `HTTP ${result.status}`);
+      }
+
+      setSelectedStream(result.data || null);
+      setStatus(`Broadcast channel created: ${result?.data?.stream_id || 'ok'}`);
+      await loadCreatorStreams();
+    } catch (error) {
+      setStatus(`Create broadcast failed: ${error.message}`);
     }
   }
 
-  function sendChatMessage() {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setStatus('Chat is not connected.');
+  async function loadCreatorStreams() {
+    if (!creatorActor.user_id) {
+      setStatus('Set creator id first.');
       return;
     }
-    const body = chatInput.trim();
-    if (!body) {
+
+    try {
+      setStatus(`Loading streams for creator ${creatorActor.user_id}...`);
+      const result = await requestWithStatus(
+        `/streams/creator/${encodeURIComponent(creatorActor.user_id)}`,
+        {},
+        creatorActor
+      );
+
+      if (!result.ok) {
+        throw new Error(result.error || `HTTP ${result.status}`);
+      }
+
+      const items = Array.isArray(result.data) ? result.data : [];
+      const broadcastOnly = items.filter((item) => item?.stream_type === 'broadcast');
+      setCreatorStreams(broadcastOnly);
+      setStatus(`Loaded ${broadcastOnly.length} broadcast stream(s).`);
+    } catch (error) {
+      setStatus(`Load creator streams failed: ${error.message}`);
+    }
+  }
+
+  async function selectAndLoadIngest(stream) {
+    setSelectedStream(stream);
+    setIngestInfo(null);
+
+    try {
+      setStatus('Loading OBS ingest credentials...');
+      const result = await requestWithStatus(
+        `/streams/${stream.stream_id}/ingest-info`,
+        {},
+        creatorActor
+      );
+
+      if (!result.ok) {
+        throw new Error(result.error || `HTTP ${result.status}`);
+      }
+
+      setIngestInfo(result.data || null);
+      setStatus('Ingest credentials loaded. Start OBS broadcast now.');
+    } catch (error) {
+      setStatus(`Load ingest credentials failed: ${error.message}`);
+    }
+  }
+
+  async function runViewerFlow(streamId, viewerId) {
+    const viewer = asActor(viewerId, 'viewer', viewerId);
+    const report = {
+      stream_id: streamId,
+      viewer_id: viewer.user_id,
+      steps: []
+    };
+
+    const accessResult = await requestWithStatus(`/streams/${streamId}/access`, {}, viewer);
+    report.steps.push({
+      step: 'access_check',
+      ok: accessResult.ok,
+      status: accessResult.status,
+      result: accessResult.data || accessResult.raw
+    });
+
+    if (!accessResult.ok) {
+      const purchaseResult = await requestWithStatus(
+        `/streams/${streamId}/ticket/purchase`,
+        { method: 'POST' },
+        viewer
+      );
+      report.steps.push({
+        step: 'ticket_purchase',
+        ok: purchaseResult.ok,
+        status: purchaseResult.status,
+        result: purchaseResult.data || purchaseResult.raw
+      });
+
+      const verifyResult = await requestWithStatus(
+        `/streams/${streamId}/ticket/verify`,
+        {},
+        viewer
+      );
+      report.steps.push({
+        step: 'ticket_verify',
+        ok: verifyResult.ok,
+        status: verifyResult.status,
+        result: verifyResult.data || verifyResult.raw
+      });
+    }
+
+    const playbackResult = await requestWithStatus(`/streams/${streamId}/playback`, {}, viewer);
+    report.steps.push({
+      step: 'playback_fetch',
+      ok: playbackResult.ok,
+      status: playbackResult.status,
+      result: playbackResult.data || playbackResult.raw
+    });
+
+    report.ok = playbackResult.ok;
+    report.playback_url = playbackResult?.data?.playback_url || '';
+    return report;
+  }
+
+  async function watchAsOne() {
+    const streamId = selectedStream?.stream_id;
+    const viewerId = singleViewerId.trim();
+
+    if (!streamId) {
+      setStatus('Select a stream first.');
       return;
     }
-    wsRef.current.send(JSON.stringify({ type: 'message', body }));
-    setChatInput('');
+    if (!viewerId) {
+      setStatus('Enter single viewer id first.');
+      return;
+    }
+
+    try {
+      setStatus(`Running watch flow for ${viewerId}...`);
+      const report = await runViewerFlow(streamId, viewerId);
+      setSingleViewerResult(report);
+      if (report.playback_url) {
+        setActivePlaybackUrl(report.playback_url);
+      }
+      setStatus(report.ok ? 'Single viewer can watch the live stream.' : 'Single viewer flow returned errors.');
+    } catch (error) {
+      setStatus(`Single viewer flow failed: ${error.message}`);
+    }
+  }
+
+  async function watchAsMany() {
+    const streamId = selectedStream?.stream_id;
+    if (!streamId) {
+      setStatus('Select a stream first.');
+      return;
+    }
+
+    const viewers = Array.from(new Set(
+      multiViewerInput
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    ));
+
+    if (viewers.length === 0) {
+      setStatus('Enter at least one viewer id for 1-to-many test.');
+      return;
+    }
+
+    try {
+      setStatus(`Running 1-to-many watch flow for ${viewers.length} viewers...`);
+      const reports = [];
+
+      for (let i = 0; i < viewers.length; i += 1) {
+        const viewerId = viewers[i];
+        setStatus(`Checking viewer ${i + 1}/${viewers.length}: ${viewerId}`);
+        const report = await runViewerFlow(streamId, viewerId);
+        reports.push(report);
+      }
+
+      setMultiViewerResults(reports);
+
+      const firstPlayable = reports.find((item) => item.playback_url);
+      if (firstPlayable?.playback_url) {
+        setActivePlaybackUrl(firstPlayable.playback_url);
+      }
+
+      const passedCount = reports.filter((item) => item.ok).length;
+      setStatus(`1-to-many complete: ${passedCount}/${reports.length} viewer(s) can watch.`);
+    } catch (error) {
+      setStatus(`1-to-many flow failed: ${error.message}`);
+    }
   }
 
   return (
     <div className="page">
       <header className="hero">
-        <h1>Livestream Local React Sample</h1>
-        <p>Test the Go livestream service on localhost with REST + WebSocket.</p>
+        <h1>Broadcast Channel Console</h1>
+        <p>Create a livestream channel, start OBS broadcast, and validate one or many viewers.</p>
       </header>
 
       <section className="panel">
-        <h2>Connection</h2>
-        <label>JWT token (from Laravel auth flow)</label>
+        <h2>Connection + Creator Identity</h2>
+        <label>JWT token (if ENABLE_AUTH=true)</label>
         <input
           value={token}
-          onChange={(e) => setToken(e.target.value)}
+          onChange={(event) => setToken(event.target.value)}
           placeholder="Paste bearer token"
         />
-        <small>Base API: {API_BASE} | WS: {WS_BASE}</small>
+        <label>Creator user id</label>
+        <input
+          value={creatorId}
+          onChange={(event) => setCreatorId(event.target.value)}
+          placeholder="creator-1"
+        />
+        <label>Creator username</label>
+        <input
+          value={creatorName}
+          onChange={(event) => setCreatorName(event.target.value)}
+          placeholder="creator name"
+        />
+        <small>API base: {API_BASE}</small>
       </section>
 
-      <section className="panel">
-        <h2>Views</h2>
-        <div className="actions">
-          <button onClick={() => setView('streams')}>Streams</button>
-          <button onClick={() => setView('sessions')}>Sessions</button>
-        </div>
-      </section>
-
-      {view === 'streams' && <section className="grid">
+      <section className="grid two">
         <div className="panel">
-          <h2>Streams</h2>
-          <button onClick={listStreams}>List All Streams</button>
-          <div className="list">
-            {streams.map((s) => (
-              <button
-                className={selectedStreamId === s.stream_id ? 'listItem selected' : 'listItem'}
-                key={s.stream_id}
-                onClick={() => setSelectedStreamId(s.stream_id)}
-              >
-                <strong>{s.title || '(untitled)'}</strong>
-                <span>{s.stream_id}</span>
-              </button>
-            ))}
-          </div>
-          <label>Selected stream id</label>
-          <input
-            value={selectedStreamId}
-            onChange={(e) => setSelectedStreamId(e.target.value)}
-            placeholder="stream_id"
-          />
-        </div>
-
-        <div className="panel">
-          <h2>Create Stream</h2>
-          <label>Type</label>
-          <select
-            value={createForm.stream_type}
-            onChange={(e) => setCreateForm((p) => ({ ...p, stream_type: e.target.value }))}
-          >
-            <option value="broadcast">broadcast</option>
-            <option value="private">private</option>
-          </select>
+          <h2>1. Create Broadcast Channel</h2>
           <label>Title</label>
           <input
-            value={createForm.title}
-            onChange={(e) => setCreateForm((p) => ({ ...p, title: e.target.value }))}
+            value={streamForm.title}
+            onChange={(event) => setStreamForm((prev) => ({ ...prev, title: event.target.value }))}
           />
+
           <label>Description</label>
           <input
-            value={createForm.description}
-            onChange={(e) => setCreateForm((p) => ({ ...p, description: e.target.value }))}
+            value={streamForm.description}
+            onChange={(event) => setStreamForm((prev) => ({ ...prev, description: event.target.value }))}
           />
-          <label>Paid stream</label>
-          <input
-            type="checkbox"
-            checked={createForm.is_paid}
-            onChange={(e) => setCreateForm((p) => ({ ...p, is_paid: e.target.checked }))}
-          />
+
+          <div className="inlineRow">
+            <label className="inlineCheck" htmlFor="is-paid">
+              <input
+                id="is-paid"
+                type="checkbox"
+                checked={streamForm.is_paid}
+                onChange={(event) => setStreamForm((prev) => ({ ...prev, is_paid: event.target.checked }))}
+              />
+              Paid stream
+            </label>
+          </div>
+
           <label>Ticket price (USD)</label>
           <input
             type="number"
             min="0"
             step="0.01"
-            value={createForm.ticket_price_usd}
-            onChange={(e) => setCreateForm((p) => ({ ...p, ticket_price_usd: e.target.value }))}
+            value={streamForm.ticket_price_usd}
+            onChange={(event) => setStreamForm((prev) => ({ ...prev, ticket_price_usd: event.target.value }))}
           />
-          <label>Invited viewer id (private only)</label>
-          <input
-            value={createForm.invited_viewer_id}
-            onChange={(e) => setCreateForm((p) => ({ ...p, invited_viewer_id: e.target.value }))}
-            placeholder="viewer user id"
-          />
-          <button onClick={createStream}>Create Stream</button>
+
+          <button onClick={createBroadcastChannel}>Create Broadcast</button>
+          <button onClick={loadCreatorStreams}>Load My Broadcasts</button>
         </div>
 
         <div className="panel">
-          <h2>Playback + Ticket + Tip</h2>
-          <button onClick={getPlayback}>Get Playback URL</button>
-          <button onClick={purchaseTicket}>Purchase Ticket</button>
-          <button onClick={verifyTicket}>Verify Ticket</button>
-          <label>Tip amount</label>
-          <input value={tipAmount} onChange={(e) => setTipAmount(e.target.value)} />
-          <label>Tip message</label>
-          <input value={tipMessage} onChange={(e) => setTipMessage(e.target.value)} />
-          <button onClick={sendTip}>Send Tip</button>
-          <label>Playback URL</label>
-          <input value={playbackUrl} readOnly placeholder="Playback URL appears here" />
-        </div>
-
-        <div className="panel">
-          <h2>Access Control</h2>
-          <p style={{fontSize:'0.85em',color:'#888'}}>
-            Locked (paid) streams → checks ticket ownership.<br/>
-            Free streams → checks follow / subscribe via Laravel.
-          </p>
-          <button onClick={checkAccess}>Check My Access</button>
-          {accessResult && (
-            <pre style={{fontSize:'0.8em',background:'#111',padding:'8px',borderRadius:'6px',overflowX:'auto'}}>
-              {JSON.stringify(accessResult, null, 2)}
-            </pre>
-          )}
-          <button onClick={syncToLaravel}>Sync Stream → Laravel</button>
-          {syncResult && (
-            <pre style={{fontSize:'0.8em',background:'#111',padding:'8px',borderRadius:'6px',overflowX:'auto'}}>
-              {JSON.stringify(syncResult, null, 2)}
-            </pre>
-          )}
-        </div>
-      </section>}
-
-      {view === 'streams' && <section className="panel">
-        <h2>Chat</h2>
-        <div className="actions">
-          <button onClick={connectChat}>Connect</button>
-          <button onClick={disconnectChat}>Disconnect</button>
-        </div>
-        <div className="chatLog">
-          {chatMessages.map((m, i) => (
-            <div key={`${m.sent_at || ''}-${i}`} className="chatItem">
-              <strong>{m.username || m.user_id || 'system'}</strong>
-              <span>{m.body || JSON.stringify(m)}</span>
-            </div>
-          ))}
-        </div>
-        <div className="chatInput">
-          <input
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Type a message"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                sendChatMessage();
-              }
-            }}
-          />
-          <button onClick={sendChatMessage}>Send</button>
-        </div>
-      </section>}
-
-      {view === 'sessions' && <section className="grid">
-        <div className="panel">
-          <h2>Create Private Session</h2>
-          <label>Title</label>
-          <input
-            value={createSessionForm.title}
-            onChange={(e) => setCreateSessionForm((p) => ({ ...p, title: e.target.value }))}
-          />
-          <label>Description</label>
-          <input
-            value={createSessionForm.description}
-            onChange={(e) => setCreateSessionForm((p) => ({ ...p, description: e.target.value }))}
-          />
-          <label>Invited viewer id</label>
-          <input
-            value={createSessionForm.invited_viewer_id}
-            onChange={(e) => setCreateSessionForm((p) => ({ ...p, invited_viewer_id: e.target.value }))}
-          />
-          <label>Price (USD)</label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={createSessionForm.price_usd}
-            onChange={(e) => setCreateSessionForm((p) => ({ ...p, price_usd: e.target.value }))}
-          />
-          <button onClick={createSession}>Create Session</button>
-        </div>
-
-        <div className="panel">
-          <h2>Invite + Manage Session</h2>
-          <label>Session id</label>
-          <input
-            value={sessionActionId}
-            onChange={(e) => setSessionActionId(e.target.value)}
-            placeholder="session stream id"
-          />
-          <label>Viewer id for invite</label>
-          <input
-            value={sessionInviteViewerId}
-            onChange={(e) => setSessionInviteViewerId(e.target.value)}
-            placeholder="viewer user id"
-          />
-          <button onClick={inviteToSession}>Send Invite</button>
-          <button onClick={() => acceptSession()}>Accept Session</button>
-          <button onClick={() => declineSession()}>Decline Session</button>
-        </div>
-
-        <div className="panel">
-          <h2>Incoming Session Invites</h2>
-          <button onClick={loadIncomingSessions}>Refresh Incoming</button>
+          <h2>2. Choose Channel + Ingest</h2>
           <div className="list">
-            {incomingSessions.map((s) => (
-              <div className="sessionCard" key={s.stream_id}>
-                <strong>{s.title || 'Private Session'}</strong>
-                <span>{s.stream_id}</span>
-                <div className="actions">
-                  <button onClick={() => acceptSession(s.stream_id)}>Accept</button>
-                  <button onClick={() => declineSession(s.stream_id)}>Decline</button>
-                </div>
-              </div>
+            {creatorStreams.map((stream) => (
+              <button
+                key={stream.stream_id}
+                className={selectedStream?.stream_id === stream.stream_id ? 'listItem selected' : 'listItem'}
+                onClick={() => selectAndLoadIngest(stream)}
+              >
+                <strong>{stream.title || '(untitled)'}</strong>
+                <span>{stream.stream_id}</span>
+                <span>status: {stream.status}</span>
+              </button>
             ))}
           </div>
+
+          <label>Selected stream id</label>
+          <input value={selectedStream?.stream_id || ''} readOnly placeholder="Select a stream" />
+
+          <label>Ingest endpoint</label>
+          <input value={ingestInfo?.ingest_endpoint || ''} readOnly placeholder="Load ingest info" />
+
+          <label>OBS server URL</label>
+          <input value={toRtmpsServer(ingestInfo?.ingest_endpoint)} readOnly placeholder="rtmps://.../app/" />
+
+          <label>Stream key</label>
+          <input value={ingestInfo?.stream_key || ''} readOnly placeholder="Load ingest info" />
         </div>
-      </section>}
+      </section>
+
+      <section className="grid two">
+        <div className="panel">
+          <h2>3A. Watch As One Viewer</h2>
+          <label>Viewer id</label>
+          <input
+            value={singleViewerId}
+            onChange={(event) => setSingleViewerId(event.target.value)}
+            placeholder="viewer-1"
+          />
+          <button onClick={watchAsOne}>Run 1-to-1 Watch Flow</button>
+          {singleViewerResult && (
+            <pre className="jsonReport">{JSON.stringify(singleViewerResult, null, 2)}</pre>
+          )}
+        </div>
+
+        <div className="panel">
+          <h2>3B. Watch As Many Viewers</h2>
+          <label>Viewer ids (comma or newline separated)</label>
+          <textarea
+            value={multiViewerInput}
+            onChange={(event) => setMultiViewerInput(event.target.value)}
+            rows={5}
+            placeholder="viewer-2, viewer-3, viewer-4"
+          />
+          <button onClick={watchAsMany}>Run 1-to-Many Watch Flow</button>
+          {multiViewerResults.length > 0 && (
+            <div className="reportList">
+              {multiViewerResults.map((result) => (
+                <div key={result.viewer_id} className={result.ok ? 'resultOk' : 'resultFail'}>
+                  <strong>{result.viewer_id}</strong>
+                  <span>{result.ok ? 'can watch' : 'cannot watch'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Live Player Preview</h2>
+        <label>Playback URL</label>
+        <input value={activePlaybackUrl} readOnly placeholder="Run a watch flow first" />
+        <VideoPlayer src={activePlaybackUrl} />
+      </section>
 
       <footer className="status">Status: {status}</footer>
     </div>

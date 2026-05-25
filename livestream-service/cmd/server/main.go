@@ -54,7 +54,7 @@ func main() {
 		logger.Info().Msg("USE_MEMORY_STORE enabled, skipping DynamoDB client")
 	}
 	laravelClient := laravel.New(cfg.LaravelInternalURL, cfg.LaravelInternalSecret)
-	authMW := middleware.NewAuth(laravelClient)
+	authMW := middleware.NewAuth(laravelClient, cfg.EnableAuth)
 	var ivs stream.IVSClient = &stream.MockIVS{}
 	if !cfg.UseMockIVS {
 		awsIVS, err := stream.NewAWSIVS(context.Background(), cfg.AWSRegion)
@@ -105,6 +105,7 @@ func main() {
 		api.Group(func(protected chi.Router) {
 			protected.Use(authMW.Require)
 			protected.Post("/streams", streamH.CreateStream)
+			protected.Get("/streams/{id}/ingest-info", streamH.GetIngestInfo)
 			protected.Get("/streams/{id}/playback", streamH.GetPlayback)
 			protected.Get("/streams/{id}/access", streamH.AccessCheck)
 			protected.Post("/streams/{id}/sync", streamH.SyncToLaravel)

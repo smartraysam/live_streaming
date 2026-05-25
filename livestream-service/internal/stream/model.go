@@ -9,6 +9,7 @@ type Stream struct {
 	Title           string    `json:"title" example:"Sunset coding session"`
 	Description     string    `json:"description" example:"Building livestream service"`
 	ChannelARN      string    `json:"channel_arn" example:"arn:aws:ivs:us-east-1:123456789012:channel/abc"`
+	IngestEndpoint  string    `json:"ingest_endpoint,omitempty" example:"a1b2c3d4.global-contribute.live-video.net"`
 	PlaybackURL     string    `json:"playback_url" example:"https://example.playback.m3u8"`
 	StreamKeyARN    string    `json:"stream_key_arn" example:"arn:aws:ivs:us-east-1:123456789012:stream-key/abc"`
 	IsPaid          bool      `json:"is_paid" example:"false"`

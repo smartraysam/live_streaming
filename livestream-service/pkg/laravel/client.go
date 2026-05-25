@@ -62,6 +62,8 @@ type ChargeResponse struct {
 type StreamAccessRequest struct {
 	UserID    string `json:"user_id"`
 	CreatorID string `json:"creator_id"`
+	StreamID  string `json:"stream_id,omitempty"`
+	IsPaid    bool   `json:"is_paid,omitempty"`
 }
 
 // StreamAccessResponse is returned by Laravel's /internal/streams/access-check.

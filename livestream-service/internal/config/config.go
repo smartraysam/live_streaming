@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Port                  string
 	Env                   string
+	EnableAuth            bool
 	AWSRegion             string
 	AWSEndpointURL        string
 	UseMemoryStore        bool
@@ -39,6 +40,7 @@ func Load() (*Config, error) {
 
 	setDefault("PORT", "8080")
 	setDefault("ENV", "development")
+	setDefault("ENABLE_AUTH", "true")
 	setDefault("AWS_REGION", "us-east-1")
 	setDefault("DYNAMODB_TABLE_STREAMS", "streams")
 	setDefault("DYNAMODB_TABLE_CHAT", "chat_messages")
@@ -47,6 +49,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Port:                  viper.GetString("PORT"),
 		Env:                   viper.GetString("ENV"),
+		EnableAuth:            viper.GetBool("ENABLE_AUTH"),
 		AWSRegion:             viper.GetString("AWS_REGION"),
 		AWSEndpointURL:        viper.GetString("AWS_ENDPOINT_URL"),
 		UseMemoryStore:        viper.GetBool("USE_MEMORY_STORE"),

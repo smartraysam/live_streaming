@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/smartraysam/livestream-service/internal/db"
@@ -13,6 +15,11 @@ import (
 type Service struct {
 	store *db.Store
 	ivs   IVSClient
+}
+
+type IngestInfo struct {
+	IngestEndpoint string `json:"ingest_endpoint"`
+	StreamKey      string `json:"stream_key"`
 }
 
 func NewService(store *db.Store, ivs IVSClient) *Service {
@@ -31,7 +38,8 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateStream
 	if req.StreamType == "private" {
 		channelType = "LOW_LATENCY"
 	}
-	ch, err := s.ivs.CreateChannel(ctx, req.Title, channelType)
+	channelName := sanitizeChannelName(req.Title)
+	ch, err := s.ivs.CreateChannel(ctx, channelName, channelType)
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +52,7 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateStream
 		Title:           req.Title,
 		Description:     req.Description,
 		ChannelARN:      ch.ChannelARN,
+		IngestEndpoint:  ch.IngestEndpoint,
 		PlaybackURL:     ch.PlaybackURL,
 		StreamKeyARN:    ch.StreamKeyARN,
 		IsPaid:          req.IsPaid,
@@ -149,6 +158,28 @@ func (s *Service) CanViewPlayback(ctx context.Context, streamID, userID string, 
 	return st.PlaybackURL, nil
 }
 
+func (s *Service) GetIngestInfo(ctx context.Context, streamID string) (*IngestInfo, error) {
+	st, err := s.Get(ctx, streamID)
+	if err != nil {
+		return nil, err
+	}
+
+	streamKey, err := s.ivs.GetStreamKey(ctx, st.ChannelARN)
+	if err != nil {
+		return nil, err
+	}
+
+	ingestEndpoint := st.IngestEndpoint
+	if ingestEndpoint == "" {
+		ingestEndpoint = deriveIngestEndpointFromARN(st.ChannelARN)
+	}
+	if ingestEndpoint == "" {
+		return nil, fmt.Errorf("ingest_endpoint_unavailable")
+	}
+
+	return &IngestInfo{IngestEndpoint: ingestEndpoint, StreamKey: streamKey}, nil
+}
+
 func toMap(s *Stream) map[string]interface{} {
 	return map[string]interface{}{
 		"stream_id":         s.StreamID,
@@ -157,6 +188,7 @@ func toMap(s *Stream) map[string]interface{} {
 		"title":             s.Title,
 		"description":       s.Description,
 		"channel_arn":       s.ChannelARN,
+		"ingest_endpoint":   s.IngestEndpoint,
 		"playback_url":      s.PlaybackURL,
 		"stream_key_arn":    s.StreamKeyARN,
 		"is_paid":           s.IsPaid,
@@ -169,6 +201,49 @@ func toMap(s *Stream) map[string]interface{} {
 		"started_at":        s.StartedAt,
 		"ended_at":          s.EndedAt,
 	}
+}
+
+// sanitizeChannelName normalizes user-provided stream titles to the subset
+// of characters accepted by IVS channel names.
+func sanitizeChannelName(title string) string {
+	t := strings.TrimSpace(strings.ToLower(title))
+	if t == "" {
+		return "livestream"
+	}
+
+	var b strings.Builder
+	b.Grow(len(t))
+	lastDash := false
+
+	for _, r := range t {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+			lastDash = false
+		case unicode.IsSpace(r):
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+		default:
+			// Skip unsupported characters (emoji/punctuation/etc).
+		}
+		if b.Len() >= 128 {
+			break
+		}
+	}
+
+	out := strings.Trim(b.String(), "-_")
+	if out == "" {
+		return "livestream"
+	}
+	if len(out) > 128 {
+		return out[:128]
+	}
+	return out
 }
 
 func fromMap(m map[string]interface{}) *Stream {
@@ -190,6 +265,9 @@ func fromMap(m map[string]interface{}) *Stream {
 	}
 	if v, ok := m["channel_arn"].(string); ok {
 		st.ChannelARN = v
+	}
+	if v, ok := m["ingest_endpoint"].(string); ok {
+		st.IngestEndpoint = v
 	}
 	if v, ok := m["playback_url"].(string); ok {
 		st.PlaybackURL = v
@@ -225,4 +303,16 @@ func fromMap(m map[string]interface{}) *Stream {
 		st.EndedAt = v
 	}
 	return st
+}
+
+func deriveIngestEndpointFromARN(channelARN string) string {
+	parts := strings.Split(channelARN, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	channelID := strings.TrimSpace(parts[len(parts)-1])
+	if channelID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s.global-contribute.live-video.net", channelID)
 }

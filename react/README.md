@@ -9,17 +9,13 @@ Workspace reference:
 
 ## What It Can Do
 
-- List live streams
-- Create a stream (requires JWT)
-- Fetch playback URL (requires JWT + access checks)
-- Purchase and verify tickets
-- Send tip requests
-- Connect to stream chat over WebSocket and send messages
-- Manage private sessions in Sessions view:
-   - Create session
-   - Invite viewer to session
-   - List incoming invites
-   - Accept or decline invite
+- Create a broadcast channel as a creator
+- Load creator broadcasts and select one stream
+- Fetch ingest credentials (ingest endpoint + stream key) for OBS
+- Run watch flow as one viewer (1-to-1 watch test)
+- Run watch flow as many viewers (1-to-many watch test)
+- Auto-handle ticket purchase and verification for paid streams
+- Preview playback with Video.js
 
 ## Prerequisites
 
@@ -70,8 +66,11 @@ The Vite dev server includes a proxy for /api to http://localhost:8080, so you c
 
 ## UI Views
 
-- Streams: stream CRUD/testing, playback/ticket/tip actions, and chat
-- Sessions: private session lifecycle actions (create/invite/incoming/accept/decline)
+- Connection + creator identity setup
+- Broadcast channel creation and creator stream selection
+- OBS ingest credentials display for broadcast start
+- One-viewer and many-viewer watch flow controls
+- Live playback preview with Video.js
 
 ## Notes
 

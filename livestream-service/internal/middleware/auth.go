@@ -23,16 +23,49 @@ type cachedUser struct {
 
 // AuthMiddleware validates bearer tokens against Laravel and caches user records for 60 seconds.
 type AuthMiddleware struct {
-	client laravel.Client
-	cache  sync.Map
+	client  laravel.Client
+	enabled bool
+	cache   sync.Map
 }
 
-func NewAuth(client laravel.Client) *AuthMiddleware {
-	return &AuthMiddleware{client: client}
+func NewAuth(client laravel.Client, enabled bool) *AuthMiddleware {
+	return &AuthMiddleware{client: client, enabled: enabled}
 }
 
 func (m *AuthMiddleware) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !m.enabled {
+			// Auth bypass mode for local/dev smoke tests.
+			// You can override identity with X-User-ID or ?user_id=...
+			userID := strings.TrimSpace(r.Header.Get("X-User-ID"))
+			if userID == "" {
+				userID = strings.TrimSpace(r.URL.Query().Get("user_id"))
+			}
+			if userID == "" {
+				userID = "anonymous"
+			}
+
+			role := strings.TrimSpace(r.Header.Get("X-User-Role"))
+			if role == "" {
+				role = strings.TrimSpace(r.URL.Query().Get("role"))
+			}
+			if role == "" {
+				role = "viewer"
+			}
+
+			username := strings.TrimSpace(r.Header.Get("X-Username"))
+			if username == "" {
+				username = strings.TrimSpace(r.URL.Query().Get("username"))
+			}
+			if username == "" {
+				username = userID
+			}
+
+			user := &laravel.UserInfo{UserID: userID, Role: role, Username: username}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey, user)))
+			return
+		}
+
 		// Check Authorization header first; fall back to ?token= query param
 		// (WebSocket browser clients cannot set headers, so they pass token in URL).
 		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
