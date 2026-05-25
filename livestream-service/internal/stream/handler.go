@@ -5,16 +5,20 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/smartraysam/livestream-service/internal/db"
 	"github.com/smartraysam/livestream-service/internal/middleware"
 	"github.com/smartraysam/livestream-service/pkg/api"
+	"github.com/smartraysam/livestream-service/pkg/laravel"
 )
 
 type Handler struct {
-	svc *Service
+	svc     *Service
+	store   *db.Store
+	laravel laravel.Client
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, store *db.Store, laravelClient laravel.Client) *Handler {
+	return &Handler{svc: svc, store: store, laravel: laravelClient}
 }
 
 // CreateStream creates a new broadcast or private live stream channel.
@@ -48,15 +52,24 @@ func (h *Handler) CreateStream(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusCreated, stream)
 }
 
-// ListStreams lists live broadcast streams sorted by viewer count.
-// @Summary      List live streams
-// @Description  Lists live broadcast streams in descending order by viewer count.
+// ListStreams lists broadcast streams. Pass ?status=live to filter LIVE-only.
+// @Summary      List streams
+// @Description  Returns all broadcast streams by default. Use ?status=live for live-only.
 // @Tags         Streams
 // @Produce      json
+// @Param        status  query     string  false  "Filter by status (live)"
 // @Success      200  {object}  api.Response
 // @Router       /streams [get]
 func (h *Handler) ListStreams(w http.ResponseWriter, r *http.Request) {
-	items, err := h.svc.ListLive(r.Context())
+	var (
+		items []*Stream
+		err   error
+	)
+	if r.URL.Query().Get("status") == "live" {
+		items, err = h.svc.ListLive(r.Context())
+	} else {
+		items, err = h.svc.ListAll(r.Context())
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -98,7 +111,10 @@ func (h *Handler) GetPlayback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	url, err := h.svc.CanViewPlayback(r.Context(), chi.URLParam(r, "id"), user.UserID, false)
+	streamID := chi.URLParam(r, "id")
+	// Check ticket ownership so paid-stream buyers can view their content.
+	hasTicket := h.store.HasTicket(r.Context(), streamID, user.UserID)
+	url, err := h.svc.CanViewPlayback(r.Context(), streamID, user.UserID, hasTicket)
 	if err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
 		return
@@ -165,6 +181,135 @@ func (h *Handler) ListByCreator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeData(w, http.StatusOK, items)
+}
+
+// AccessCheck validates whether the authenticated user may access a stream.
+//
+// For locked (paid) streams: checks if the user has purchased a ticket.
+// For free streams: asks the Laravel backend to verify that the user follows
+// or subscribes to the creator.
+//
+// @Summary      Check stream access
+// @Description  Returns whether the requesting user is allowed to watch this stream.
+// @Tags         Streams
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id   path      string  true  "Stream ID"
+// @Success      200  {object}  api.Response
+// @Failure      403  {object}  api.ErrorResponse
+// @Router       /streams/{id}/access [get]
+func (h *Handler) AccessCheck(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.Get(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stream_not_found")
+		return
+	}
+
+	// Creator always has access to their own stream.
+	if user.UserID == st.CreatorID {
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"can_access": true,
+			"reason":     "creator",
+		})
+		return
+	}
+
+	if st.IsPaid {
+		// Locked stream: the user must have bought a ticket.
+		hasTicket := h.store.HasTicket(r.Context(), streamID, user.UserID)
+		if !hasTicket {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"can_access":       false,
+				"reason":           "payment_required",
+				"ticket_price_usd": st.TicketPriceUSD,
+			})
+			return
+		}
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"can_access": true,
+			"reason":     "ticket_holder",
+		})
+		return
+	}
+
+	// Free stream: user must follow or subscribe to the creator.
+	resp, err := h.laravel.CheckStreamAccess(r.Context(), laravel.StreamAccessRequest{
+		UserID:    user.UserID,
+		CreatorID: st.CreatorID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "access_check_failed")
+		return
+	}
+	if !resp.CanAccess {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"can_access": false,
+			"reason":     resp.Reason,
+			"creator_id": st.CreatorID,
+		})
+		return
+	}
+	writeData(w, http.StatusOK, map[string]interface{}{
+		"can_access": true,
+		"reason":     resp.Reason,
+	})
+}
+
+// SyncToLaravel pushes current stream metadata to the Laravel backend.
+//
+// @Summary      Sync stream to Laravel
+// @Description  Persists stream details (title, status, pricing, ARNs) to the Laravel backend.
+// @Tags         Streams
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id   path      string  true  "Stream ID"
+// @Success      200  {object}  api.Response
+// @Failure      404  {object}  api.ErrorResponse
+// @Router       /streams/{id}/sync [post]
+func (h *Handler) SyncToLaravel(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.Get(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stream_not_found")
+		return
+	}
+	if user.UserID != st.CreatorID {
+		writeError(w, http.StatusForbidden, "only_creator_can_sync")
+		return
+	}
+	resp, err := h.laravel.SyncStream(r.Context(), laravel.SyncStreamRequest{
+		StreamID:       st.StreamID,
+		CreatorID:      st.CreatorID,
+		StreamType:     st.StreamType,
+		Title:          st.Title,
+		Description:    st.Description,
+		IsPaid:         st.IsPaid,
+		TicketPriceUSD: st.TicketPriceUSD,
+		ChannelARN:     st.ChannelARN,
+		PlaybackURL:    st.PlaybackURL,
+		Status:         st.Status,
+		CreatedAt:      st.CreatedAt,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "sync_failed")
+		return
+	}
+	writeData(w, http.StatusOK, resp)
 }
 
 func writeData(w http.ResponseWriter, status int, data interface{}) {

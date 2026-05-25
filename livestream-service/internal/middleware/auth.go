@@ -33,7 +33,12 @@ func NewAuth(client laravel.Client) *AuthMiddleware {
 
 func (m *AuthMiddleware) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check Authorization header first; fall back to ?token= query param
+		// (WebSocket browser clients cannot set headers, so they pass token in URL).
 		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+		if token == "" {
+			token = strings.TrimSpace(r.URL.Query().Get("token"))
+		}
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, "missing_bearer_token")
 			return

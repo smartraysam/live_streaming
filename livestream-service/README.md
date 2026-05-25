@@ -82,6 +82,7 @@ AWS:
 - AWS_REGION: AWS region, example us-east-1
 - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 - AWS_ENDPOINT_URL: optional custom endpoint (use http://localhost:4566 for LocalStack)
+- USE_MEMORY_STORE: true/false, force in-memory stream/chat/ticket storage for local testing without DynamoDB
 - USE_MOCK_IVS: true/false, force mock IVS client
 - DYNAMODB_TABLE_STREAMS: stream metadata table
 - DYNAMODB_TABLE_CHAT: chat messages table
@@ -132,6 +133,17 @@ This mode runs DynamoDB/SQS on LocalStack and uses mock IVS.
 4. Start service:
 
    make run
+
+### 3) Mock-only local mode (fastest for UI/API testing)
+
+Use this mode when you want to test the service and React sample without LocalStack.
+
+1. Set `USE_MEMORY_STORE=true`.
+2. Set `USE_MOCK_IVS=true`.
+3. Point `LARAVEL_INTERNAL_URL` at a local mock or dev Laravel internal API.
+4. Start service:
+
+  go run ./cmd/server
 
 ## Build, Test, Docs
 

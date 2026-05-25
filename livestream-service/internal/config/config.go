@@ -13,6 +13,7 @@ type Config struct {
 	Env                   string
 	AWSRegion             string
 	AWSEndpointURL        string
+	UseMemoryStore        bool
 	UseMockIVS            bool
 	DynamoTableStreams    string
 	DynamoTableChat       string
@@ -48,6 +49,7 @@ func Load() (*Config, error) {
 		Env:                   viper.GetString("ENV"),
 		AWSRegion:             viper.GetString("AWS_REGION"),
 		AWSEndpointURL:        viper.GetString("AWS_ENDPOINT_URL"),
+		UseMemoryStore:        viper.GetBool("USE_MEMORY_STORE"),
 		UseMockIVS:            viper.GetBool("USE_MOCK_IVS"),
 		DynamoTableStreams:    viper.GetString("DYNAMODB_TABLE_STREAMS"),
 		DynamoTableChat:       viper.GetString("DYNAMODB_TABLE_CHAT"),

@@ -23,6 +23,14 @@ func (f *fakeLaravel) NotifyUser(ctx context.Context, userID, eventType string, 
 	return nil
 }
 
+func (f *fakeLaravel) CheckStreamAccess(ctx context.Context, req laravel.StreamAccessRequest) (*laravel.StreamAccessResponse, error) {
+	return &laravel.StreamAccessResponse{CanAccess: true, Reason: "following"}, nil
+}
+
+func (f *fakeLaravel) SyncStream(ctx context.Context, req laravel.SyncStreamRequest) (*laravel.SyncStreamResponse, error) {
+	return &laravel.SyncStreamResponse{Synced: true, LaravelStreamID: "lv-1"}, nil
+}
+
 func TestAcceptSessionInvite(t *testing.T) {
 	store := db.NewStore("streams", "chat", "tickets")
 	streamSvc := stream.NewService(store, &stream.MockIVS{})

@@ -43,10 +43,15 @@ func main() {
 	}
 
 	logger := log.With().Str("service", "livestream").Logger()
-	store, err := db.NewStoreWithDynamo(context.Background(), cfg.AWSRegion, cfg.AWSEndpointURL, cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	store := db.NewStore(cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	if !cfg.UseMemoryStore {
+		store, err = db.NewStoreWithDynamo(context.Background(), cfg.AWSRegion, cfg.AWSEndpointURL, cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	}
 	if err != nil {
 		logger.Warn().Err(err).Msg("failed to initialize DynamoDB store, using in-memory fallback")
 		store = db.NewStore(cfg.DynamoTableStreams, cfg.DynamoTableChat, cfg.DynamoTableTickets)
+	} else if cfg.UseMemoryStore {
+		logger.Info().Msg("USE_MEMORY_STORE enabled, skipping DynamoDB client")
 	}
 	laravelClient := laravel.New(cfg.LaravelInternalURL, cfg.LaravelInternalSecret)
 	authMW := middleware.NewAuth(laravelClient)
@@ -79,7 +84,7 @@ func main() {
 	ticketSvc := ticket.NewService(store, streamSvc, laravelClient, eventPublisher)
 	recordingSvc := recording.NewService(store, streamSvc, hubs)
 
-	streamH := stream.NewHandler(streamSvc)
+	streamH := stream.NewHandler(streamSvc, store, laravelClient)
 	sessionH := session.NewHandler(sessionSvc)
 	chatH := chat.NewHandler(store, streamSvc, hubs)
 	paymentH := payment.NewHandler(paymentSvc)
@@ -101,6 +106,8 @@ func main() {
 			protected.Use(authMW.Require)
 			protected.Post("/streams", streamH.CreateStream)
 			protected.Get("/streams/{id}/playback", streamH.GetPlayback)
+			protected.Get("/streams/{id}/access", streamH.AccessCheck)
+			protected.Post("/streams/{id}/sync", streamH.SyncToLaravel)
 			protected.Patch("/streams/{id}", streamH.UpdateStream)
 			protected.Delete("/streams/{id}", streamH.DeleteStream)
 			protected.Get("/streams/{id}/chat", chatH.Connect)

@@ -43,6 +43,8 @@ export default function App() {
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
+  const [accessResult, setAccessResult] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
   const wsRef = useRef(null);
 
   const authHeaders = useMemo(() => {
@@ -248,6 +250,41 @@ export default function App() {
     }
   }
 
+  async function checkAccess() {
+    if (!selectedStreamId.trim()) {
+      setStatus('Select or enter a stream id first.');
+      return;
+    }
+    try {
+      setStatus('Checking stream access...');
+      const json = await request(`/streams/${selectedStreamId}/access`, {}, true);
+      setAccessResult(json?.data || json);
+      const d = json?.data || json;
+      setStatus(d?.can_access
+        ? `Access granted (${d.reason})`
+        : `Access denied (${d.reason})`);
+    } catch (err) {
+      setAccessResult({ can_access: false, reason: err.message });
+      setStatus(`Access check failed: ${err.message}`);
+    }
+  }
+
+  async function syncToLaravel() {
+    if (!selectedStreamId.trim()) {
+      setStatus('Select or enter a stream id first.');
+      return;
+    }
+    try {
+      setStatus('Syncing stream to Laravel...');
+      const json = await request(`/streams/${selectedStreamId}/sync`, { method: 'POST' }, true);
+      setSyncResult(json?.data || json);
+      setStatus(`Stream synced. Laravel ID: ${json?.data?.laravel_stream_id || 'ok'}`);
+    } catch (err) {
+      setSyncResult({ synced: false, error: err.message });
+      setStatus(`Sync failed: ${err.message}`);
+    }
+  }
+
   function connectChat() {
     if (!selectedStreamId.trim()) {
       setStatus('Select or enter a stream id first.');
@@ -263,8 +300,10 @@ export default function App() {
       wsRef.current = null;
     }
 
-    const wsURL = `${WS_BASE}/streams/${selectedStreamId}/chat`;
-    const ws = new WebSocket(wsURL, []);
+    // Browser WebSocket does not allow custom headers, so the bearer token is
+    // appended as a query param. The Go middleware checks ?token= as a fallback.
+    const wsURL = `${WS_BASE}/streams/${selectedStreamId}/chat?token=${encodeURIComponent(token.trim())}`;
+    const ws = new WebSocket(wsURL);
     wsRef.current = ws;
 
     ws.onopen = () => setStatus('Chat connected.');
@@ -330,7 +369,7 @@ export default function App() {
       {view === 'streams' && <section className="grid">
         <div className="panel">
           <h2>Streams</h2>
-          <button onClick={listStreams}>List Live Streams</button>
+          <button onClick={listStreams}>List All Streams</button>
           <div className="list">
             {streams.map((s) => (
               <button
@@ -406,6 +445,26 @@ export default function App() {
           <button onClick={sendTip}>Send Tip</button>
           <label>Playback URL</label>
           <input value={playbackUrl} readOnly placeholder="Playback URL appears here" />
+        </div>
+
+        <div className="panel">
+          <h2>Access Control</h2>
+          <p style={{fontSize:'0.85em',color:'#888'}}>
+            Locked (paid) streams → checks ticket ownership.<br/>
+            Free streams → checks follow / subscribe via Laravel.
+          </p>
+          <button onClick={checkAccess}>Check My Access</button>
+          {accessResult && (
+            <pre style={{fontSize:'0.8em',background:'#111',padding:'8px',borderRadius:'6px',overflowX:'auto'}}>
+              {JSON.stringify(accessResult, null, 2)}
+            </pre>
+          )}
+          <button onClick={syncToLaravel}>Sync Stream → Laravel</button>
+          {syncResult && (
+            <pre style={{fontSize:'0.8em',background:'#111',padding:'8px',borderRadius:'6px',overflowX:'auto'}}>
+              {JSON.stringify(syncResult, null, 2)}
+            </pre>
+          )}
         </div>
       </section>}
 

@@ -25,6 +25,16 @@ POST /internal/notifications/send
   Headers: X-Internal-Secret
   Body:    { "user_id", "event_type", "payload": {} }
   Returns: { "sent": true }
+
+POST /internal/streams/access-check
+  Headers: X-Internal-Secret
+  Body:    { "user_id", "creator_id" }
+  Returns: { "can_access": bool, "reason": "following|subscribed|not_following|not_subscribed" }
+
+POST /internal/streams/sync
+  Headers: X-Internal-Secret
+  Body:    stream fields
+  Returns: { "synced": bool, "laravel_stream_id": string }
 */
 
 type UserInfo struct {
@@ -46,10 +56,51 @@ type ChargeResponse struct {
 	Status        string `json:"status"`
 }
 
+// StreamAccessRequest asks Laravel whether a user (already authenticated) may
+// access an unlocked stream by verifying their follow/subscription relationship
+// with the creator.
+type StreamAccessRequest struct {
+	UserID    string `json:"user_id"`
+	CreatorID string `json:"creator_id"`
+}
+
+// StreamAccessResponse is returned by Laravel's /internal/streams/access-check.
+// Reason values: "following", "subscribed", "not_following", "not_subscribed".
+type StreamAccessResponse struct {
+	CanAccess bool   `json:"can_access"`
+	Reason    string `json:"reason"`
+}
+
+// SyncStreamRequest carries stream metadata to be persisted in Laravel.
+type SyncStreamRequest struct {
+	StreamID       string    `json:"stream_id"`
+	CreatorID      string    `json:"creator_id"`
+	StreamType     string    `json:"stream_type"`
+	Title          string    `json:"title"`
+	Description    string    `json:"description"`
+	IsPaid         bool      `json:"is_paid"`
+	TicketPriceUSD float64   `json:"ticket_price_usd"`
+	ChannelARN     string    `json:"channel_arn,omitempty"`
+	PlaybackURL    string    `json:"playback_url,omitempty"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// SyncStreamResponse is returned by Laravel's /internal/streams/sync.
+type SyncStreamResponse struct {
+	Synced          bool   `json:"synced"`
+	LaravelStreamID string `json:"laravel_stream_id"`
+}
+
 type Client interface {
 	VerifyToken(ctx context.Context, token string) (*UserInfo, error)
 	ChargePayment(ctx context.Context, req ChargeRequest) (*ChargeResponse, error)
 	NotifyUser(ctx context.Context, userID, eventType string, payload map[string]string) error
+	// CheckStreamAccess asks Laravel if user follows/subscribes to the creator
+	// (used for unlocked streams where payment is not required).
+	CheckStreamAccess(ctx context.Context, req StreamAccessRequest) (*StreamAccessResponse, error)
+	// SyncStream pushes stream metadata to the Laravel backend for persistence.
+	SyncStream(ctx context.Context, req SyncStreamRequest) (*SyncStreamResponse, error)
 }
 
 type HTTPClient struct {
@@ -89,6 +140,22 @@ func (c *HTTPClient) NotifyUser(ctx context.Context, userID, eventType string, p
 		"payload":    payload,
 	}
 	return c.post(ctx, "/internal/notifications/send", body, nil)
+}
+
+func (c *HTTPClient) CheckStreamAccess(ctx context.Context, req StreamAccessRequest) (*StreamAccessResponse, error) {
+	var out StreamAccessResponse
+	if err := c.post(ctx, "/internal/streams/access-check", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *HTTPClient) SyncStream(ctx context.Context, req SyncStreamRequest) (*SyncStreamResponse, error) {
+	var out SyncStreamResponse
+	if err := c.post(ctx, "/internal/streams/sync", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *HTTPClient) post(ctx context.Context, path string, body interface{}, out interface{}) error {
