@@ -1,2 +1,4 @@
 /livestream-service-prompt.md
 react-livestream-sample/node_modules/
+livestream-service/cloudfront-private-key.pem
+livestream-service/.env
