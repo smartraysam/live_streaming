@@ -4,3 +4,4 @@ livestream-service/cloudfront-private-key.pem
 livestream-service/.env
 react/node_modules
 react/dist
+livestream-service/Makefile
