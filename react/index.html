@@ -7,6 +7,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- IVS Player for low-latency HLS playback (2-5s latency vs 15-30s with generic HLS) -->
+    <script src="https://player.live-video.net/1.35.0/amazon-ivs-player.min.js"></script>
+    <!-- IVS Web Broadcast SDK for browser-based RTMPS ingest -->
     <script src="https://web-broadcast.live-video.net/1.35.0/amazon-ivs-web-broadcast.js"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>

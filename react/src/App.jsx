@@ -14,51 +14,79 @@ function parseJsonSafe(text) {
 }
 
 function VideoPlayer({ src }) {
-  const containerRef = useRef(null);
-  const playerRef = useRef(null);
+  const videoRef = useRef(null);     // <video> element used by IVS Player
+  const containerRef = useRef(null); // fallback container used by Video.js
+  const playerRef = useRef(null);    // { type: 'ivs'|'vjs', p: playerInstance }
 
+  // Init player once on mount
   useEffect(() => {
-    if (!containerRef.current || playerRef.current) {
-      return;
+    const ivs = window.IVSPlayer;
+    if (ivs && ivs.isPlayerSupported && videoRef.current) {
+      // Amazon IVS Player: auto-uses Low-Latency HLS (2-5s lag vs 15-30s with HLS.js)
+      const p = ivs.create();
+      p.attachHTMLVideoElement(videoRef.current);
+      playerRef.current = { type: 'ivs', p };
+    } else if (containerRef.current && !playerRef.current) {
+      // Fallback: Video.js with low-latency HLS.js config
+      const videoEl = document.createElement('video-js');
+      videoEl.className = 'video-js vjs-default-skin vjs-big-play-centered';
+      containerRef.current.appendChild(videoEl);
+      const p = videojs(videoEl, {
+        controls: true,
+        fluid: true,
+        responsive: true,
+        preload: 'auto',
+        liveui: true,
+        html5: {
+          vhs: {
+            overrideNative: true,
+            enableLowInitialPlaylist: true,
+            liveSyncDurationCount: 2,
+            liveMaxLatencyDurationCount: 4,
+          },
+        },
+      });
+      playerRef.current = { type: 'vjs', p };
     }
-
-    const videoEl = document.createElement('video-js');
-    videoEl.className = 'video-js vjs-default-skin vjs-big-play-centered';
-    containerRef.current.appendChild(videoEl);
-
-    playerRef.current = videojs(videoEl, {
-      controls: true,
-      fluid: true,
-      responsive: true,
-      preload: 'auto'
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!playerRef.current) {
-      return;
-    }
-
-    if (!src) {
-      playerRef.current.pause();
-      playerRef.current.reset();
-      return;
-    }
-
-    playerRef.current.src({ src, type: 'application/x-mpegURL' });
-    playerRef.current.load();
-  }, [src]);
-
-  useEffect(() => {
     return () => {
-      if (playerRef.current) {
-        playerRef.current.dispose();
-        playerRef.current = null;
-      }
+      if (!playerRef.current) return;
+      if (playerRef.current.type === 'ivs') playerRef.current.p.delete();
+      else playerRef.current.p.dispose();
+      playerRef.current = null;
     };
   }, []);
 
-  return <div data-vjs-player ref={containerRef} className="videoPlayerHost" />;
+  // Load / change source
+  useEffect(() => {
+    const ref = playerRef.current;
+    if (!ref) return;
+    if (!src) {
+      ref.p.pause();
+      if (ref.type === 'vjs') ref.p.reset();
+      return;
+    }
+    if (ref.type === 'ivs') {
+      ref.p.load(src);
+      ref.p.play();
+    } else {
+      ref.p.src({ src, type: 'application/x-mpegURL' });
+      ref.p.load();
+    }
+  }, [src]);
+
+  const ivsReady = !!(window.IVSPlayer && window.IVSPlayer.isPlayerSupported);
+
+  return (
+    <div data-vjs-player ref={containerRef} className="videoPlayerHost">
+      {/* IVS Player uses a plain <video> element */}
+      <video
+        ref={videoRef}
+        style={{ width: '100%', height: '100%', display: ivsReady ? 'block' : 'none' }}
+        controls
+        playsInline
+      />
+    </div>
+  );
 }
 
 function toRtmpsServer(ingestEndpoint) {
