@@ -155,6 +155,24 @@ small {
   background: #7c3aed;
 }
 
+/* ── Real-Time Stage participant tile ──────────────────────────────────────── */
+.stageParticipant {
+  background: #1a1a2e;
+  border: 1px solid #334;
+  border-radius: 8px;
+  padding: 6px;
+  text-align: center;
+}
+
+.participantLabel {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .checklistActions {
   display: grid;
   gap: 8px;

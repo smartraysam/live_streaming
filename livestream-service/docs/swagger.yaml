@@ -49,6 +49,51 @@ definitions:
         example: 1:1 coaching
         type: string
     type: object
+  stage.CreateStageRequest:
+    properties:
+      mode:
+        allOf:
+        - $ref: '#/definitions/stage.StageMode'
+        example: CALL
+      title:
+        example: Private call
+        type: string
+    type: object
+  stage.DisconnectRequest:
+    properties:
+      reason:
+        example: host_removed
+        type: string
+    type: object
+  stage.JoinStageRequest:
+    properties:
+      capabilities:
+        description: Capabilities requested by this participant.  Omit to use mode
+          defaults.
+        items:
+          $ref: '#/definitions/stage.ParticipantCapability'
+        type: array
+      user_id:
+        description: UserID of the participant (resolved from auth when ENABLE_AUTH=true).
+        example: user_456
+        type: string
+    type: object
+  stage.ParticipantCapability:
+    enum:
+    - PUBLISH
+    - SUBSCRIBE
+    type: string
+    x-enum-varnames:
+    - CapabilityPublish
+    - CapabilitySubscribe
+  stage.StageMode:
+    enum:
+    - CALL
+    - BROADCAST
+    type: string
+    x-enum-varnames:
+    - StageModeCall
+    - StageModeBroadcast
   stream.CreateStreamRequest:
     properties:
       description:
@@ -203,9 +248,234 @@ paths:
       summary: List incoming invites
       tags:
       - Sessions
+  /stages:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List stages created by the caller
+      tags:
+      - Stages (Real-Time)
+    post:
+      consumes:
+      - application/json
+      description: Provisions an IVS Real-Time stage. Use mode=CALL for 1-to-1, mode=BROADCAST
+        for 1-to-many.
+      parameters:
+      - description: Stage config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/stage.CreateStageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a real-time stage
+      tags:
+      - Stages (Real-Time)
+  /stages/{id}:
+    delete:
+      description: Only the host can end a stage. All participants are disconnected.
+      parameters:
+      - description: Stage ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: End (delete) a stage
+      tags:
+      - Stages (Real-Time)
+    get:
+      parameters:
+      - description: Stage ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get stage details
+      tags:
+      - Stages (Real-Time)
+  /stages/{id}/join:
+    post:
+      consumes:
+      - application/json
+      description: Returns a short-lived WebRTC token. Pass it to IVSBroadcastClient.Stage
+        on the client.
+      parameters:
+      - description: Stage ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Join options
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/stage.JoinStageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a participant token to join a stage
+      tags:
+      - Stages (Real-Time)
+  /stages/{id}/participants/{pid}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Stage ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Participant ID
+        in: path
+        name: pid
+        required: true
+        type: string
+      - description: Reason
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/stage.DisconnectRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Disconnect a participant (host only)
+      tags:
+      - Stages (Real-Time)
   /streams:
     get:
-      description: Lists live broadcast streams in descending order by viewer count.
+      description: Returns all broadcast streams by default. Use ?status=live for
+        live-only.
+      parameters:
+      - description: Filter by status (live)
+        in: query
+        name: status
+        type: string
       produces:
       - application/json
       responses:
@@ -213,7 +483,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.Response'
-      summary: List live streams
+      summary: List streams
       tags:
       - Streams
     post:
@@ -327,6 +597,31 @@ paths:
       summary: Update stream
       tags:
       - Streams
+  /streams/{id}/access:
+    get:
+      description: Returns whether the requesting user is allowed to watch this stream.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Check stream access
+      tags:
+      - Streams
   /streams/{id}/chat:
     get:
       description: Upgrades HTTP to websocket and subscribes user to stream chat.
@@ -367,6 +662,57 @@ paths:
       summary: Get chat history
       tags:
       - Chat
+  /streams/{id}/ingest-info:
+    get:
+      description: Returns IVS ingest endpoint and stream key for OBS/RTMPS broadcasting.
+        Creator only.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get ingest info
+      tags:
+      - Streams
+  /streams/{id}/ivs-status:
+    get:
+      description: Returns real-time IVS channel live state for creator-owned stream.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get IVS channel status
+      tags:
+      - Streams
   /streams/{id}/playback:
     get:
       description: Returns signed playback URL for viewer after invite/ticket checks.
@@ -417,6 +763,82 @@ paths:
       summary: Get recording
       tags:
       - Recording
+  /streams/{id}/start-live:
+    post:
+      description: Marks stream status as LIVE for creator-triggered broadcast start.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start live broadcast
+      tags:
+      - Streams
+  /streams/{id}/stop-live:
+    post:
+      description: Marks stream status as ENDED for creator-triggered broadcast stop.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Stop live broadcast
+      tags:
+      - Streams
+  /streams/{id}/sync:
+    post:
+      description: Persists stream details (title, status, pricing, ARNs) to the Laravel
+        backend.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Sync stream to Laravel
+      tags:
+      - Streams
   /streams/{id}/ticket/purchase:
     post:
       description: Charges viewer and grants stream ticket on success.

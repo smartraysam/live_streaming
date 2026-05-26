@@ -123,6 +123,39 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// StageParticipantView – renders one remote participant's video/audio
+// ──────────────────────────────────────────────────────────────────────────────
+function StageParticipantView({ participantId, streams }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (!videoRef.current || !streams || streams.length === 0) return;
+
+    const videoTrack = streams.find((s) => s.streamType === 'video' || s.mediaStreamTrack?.kind === 'video');
+    const audioTrack = streams.find((s) => s.streamType === 'audio' || s.mediaStreamTrack?.kind === 'audio');
+
+    const tracks = [];
+    if (videoTrack?.mediaStreamTrack) tracks.push(videoTrack.mediaStreamTrack);
+    if (audioTrack?.mediaStreamTrack) tracks.push(audioTrack.mediaStreamTrack);
+
+    if (tracks.length > 0) {
+      videoRef.current.srcObject = new MediaStream(tracks);
+      videoRef.current.play().catch(() => {});
+    }
+    return () => {
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+  }, [streams]);
+
+  return (
+    <div className="stageParticipant">
+      <p className="participantLabel">{participantId}</p>
+      <video ref={videoRef} autoPlay playsInline style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+    </div>
+  );
+}
+
 export default function App() {
   const [token, setToken] = useState('');
   const [creatorId, setCreatorId] = useState('creator-1');
@@ -169,6 +202,15 @@ export default function App() {
   const viewerVideoRef = useRef(null);
   const broadcastClientRef = useRef(null);
   const isBrowserBroadcastingRef = useRef(false);
+
+  // ── IVS Real-Time (Stages) state ──────────────────────────────────────────
+  const [stageMode, setStageMode] = useState('CALL');
+  const [stageTitle, setStageTitle] = useState('Quick call');
+  const [currentStage, setCurrentStage] = useState(null);   // backend Stage object
+  const [stageConnState, setStageConnState] = useState('');  // 'connecting'|'connected'|'disconnected'
+  const [stageParticipants, setStageParticipants] = useState({}); // { [pid]: streams[] }
+  const [stageError, setStageError] = useState('');
+  const stageClientRef = useRef(null);  // IVS Stage SDK instance
 
   const creatorActor = useMemo(
     () => asActor(creatorId, 'creator', creatorName || creatorId),
@@ -553,6 +595,148 @@ export default function App() {
     setViewerUseLocalPreview(false);
     setShowCreatorCameraScreen(false);
     setCameraError('');
+  }
+
+  // ── IVS Real-Time (Stages) functions ────────────────────────────────────────
+
+  async function createRTStage() {
+    if (!creatorActor.user_id) { setStageError('Set creator id first.'); return; }
+    if (!stageTitle.trim()) { setStageError('Enter a stage title.'); return; }
+    try {
+      setStageError('');
+      setStatus('Creating real-time stage...');
+      const result = await requestWithStatus('/stages', {
+        method: 'POST',
+        body: JSON.stringify({ mode: stageMode, title: stageTitle.trim() })
+      }, creatorActor);
+      if (!result.ok) throw new Error(result.error || `HTTP ${result.status}`);
+      setCurrentStage(result.data);
+      setStageParticipants({});
+      setStageConnState('');
+      setStatus(`Stage "${result.data.title}" created. Click Join to connect.`);
+    } catch (e) {
+      setStageError(e.message);
+      setStatus(`Create stage failed: ${e.message}`);
+    }
+  }
+
+  async function joinRTStage() {
+    const sdk = window.IVSBroadcastClient;
+    if (!sdk?.Stage) { setStageError('IVS Broadcast SDK not loaded. Refresh the page.'); return; }
+    if (!currentStage?.stage_id) { setStageError('Create a stage first.'); return; }
+    if (stageClientRef.current) { setStageError('Already joined a stage. Leave first.'); return; }
+
+    try {
+      setStageError('');
+      setStatus('Fetching participant token...');
+      const result = await requestWithStatus(`/stages/${currentStage.stage_id}/join`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      }, creatorActor);
+      if (!result.ok) throw new Error(result.error || `HTTP ${result.status}`);
+      const { token: participantToken } = result.data;
+
+      // Ensure local camera is available (reuse existing stream or acquire new one)
+      if (!creatorStreamRef.current) {
+        creatorStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      }
+      const localMedia = creatorStreamRef.current;
+
+      const videoTrack = localMedia.getVideoTracks()[0];
+      const audioTrack = localMedia.getAudioTracks()[0];
+
+      // Build local streams for publishing
+      const localStreams = [];
+      if (videoTrack) localStreams.push(new sdk.LocalStageStream(videoTrack));
+      if (audioTrack) localStreams.push(new sdk.LocalStageStream(audioTrack));
+
+      // Strategy: publish local streams; subscribe to everyone else
+      const strategy = {
+        stageStreamsToPublish() { return localStreams; },
+        shouldPublishParticipant() { return true; },
+        shouldSubscribeToParticipant(participant) {
+          return participant.isLocal ? sdk.SubscribeType.NONE : sdk.SubscribeType.AUDIO_VIDEO;
+        }
+      };
+
+      const stage = new sdk.Stage(participantToken, strategy);
+
+      stage.on(sdk.StageEvents.STAGE_CONNECTION_STATE_CHANGED, (state) => {
+        const label = String(state).toLowerCase();
+        setStageConnState(label);
+        setStatus(`Stage connection: ${label}`);
+      });
+
+      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_JOINED, (participant) => {
+        if (participant.isLocal) return;
+        setStageParticipants((prev) => ({ ...prev, [participant.id]: [] }));
+      });
+
+      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_LEFT, (participant) => {
+        setStageParticipants((prev) => {
+          const next = { ...prev };
+          delete next[participant.id];
+          return next;
+        });
+      });
+
+      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_STREAMS_ADDED, (participant, streams) => {
+        if (participant.isLocal) return;
+        setStageParticipants((prev) => ({ ...prev, [participant.id]: streams }));
+      });
+
+      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_STREAMS_REMOVED, (participant) => {
+        setStageParticipants((prev) => ({ ...prev, [participant.id]: [] }));
+      });
+
+      setStatus('Connecting to stage...');
+      await stage.join();
+      stageClientRef.current = stage;
+    } catch (e) {
+      setStageError(e.message);
+      setStatus(`Join stage failed: ${e.message}`);
+    }
+  }
+
+  async function leaveRTStage() {
+    if (stageClientRef.current) {
+      stageClientRef.current.leave();
+      stageClientRef.current = null;
+    }
+    setStageParticipants({});
+    setStageConnState('disconnected');
+    setStatus('Left the stage.');
+  }
+
+  async function endRTStage() {
+    if (!currentStage?.stage_id) return;
+    await leaveRTStage();
+    try {
+      const result = await requestWithStatus(`/stages/${currentStage.stage_id}`, {
+        method: 'DELETE'
+      }, creatorActor);
+      if (!result.ok && result.status !== 404) throw new Error(result.error || `HTTP ${result.status}`);
+      setCurrentStage(null);
+      setStatus('Stage ended.');
+    } catch (e) {
+      setStageError(e.message);
+      setStatus(`End stage failed: ${e.message}`);
+    }
+  }
+
+  async function kickParticipant(pid) {
+    if (!currentStage?.stage_id) return;
+    try {
+      const result = await requestWithStatus(
+        `/stages/${currentStage.stage_id}/participants/${pid}`,
+        { method: 'DELETE', body: JSON.stringify({ reason: 'host_removed' }) },
+        creatorActor
+      );
+      if (!result.ok) throw new Error(result.error || `HTTP ${result.status}`);
+      setStatus(`Participant ${pid} disconnected.`);
+    } catch (e) {
+      setStageError(e.message);
+    }
   }
 
   async function stopLiveBroadcast() {
@@ -1063,6 +1247,86 @@ export default function App() {
         </div>
       </section>
 
+
+      <section className="panel">
+        <h2>Real-Time Video Call (IVS Stages)</h2>
+        <p className="status">
+          <strong>CALL</strong> = 1-to-1 (both publish + subscribe) &nbsp;|&nbsp;
+          <strong>BROADCAST</strong> = 1-to-many (host publishes, guests watch only via WebRTC)
+        </p>
+
+        {stageError && <p className="statusWarn">Stage error: {stageError}</p>}
+
+        <div className="formRow">
+          <label>Mode</label>
+          <select value={stageMode} onChange={(e) => setStageMode(e.target.value)}>
+            <option value="CALL">CALL (1-to-1)</option>
+            <option value="BROADCAST">BROADCAST (1-to-many)</option>
+          </select>
+        </div>
+        <div className="formRow">
+          <label>Title</label>
+          <input
+            value={stageTitle}
+            onChange={(e) => setStageTitle(e.target.value)}
+            placeholder="Stage title"
+          />
+        </div>
+
+        <div className="cameraActions">
+          <button className="primaryAction" onClick={createRTStage} disabled={!!currentStage}>
+            Create Stage
+          </button>
+          <button
+            className="creatorAction"
+            onClick={joinRTStage}
+            disabled={!currentStage || !!stageClientRef.current}
+          >
+            Join Stage
+          </button>
+          <button className="stopAction" onClick={leaveRTStage} disabled={!stageClientRef.current}>
+            Leave Stage
+          </button>
+          <button onClick={endRTStage} disabled={!currentStage}>
+            End Stage (host)
+          </button>
+        </div>
+
+        {currentStage && (
+          <div className="checklistMeta" style={{ marginTop: 8 }}>
+            <span><strong>Stage ID:</strong> {currentStage.stage_id}</span>
+            <span><strong>Mode:</strong> {currentStage.mode}</span>
+            <span className={`statusPill ${stageConnState === 'connected' ? 'live' : 'idle'}`}>
+              {stageConnState || 'not joined'}
+            </span>
+          </div>
+        )}
+
+        {Object.keys(stageParticipants).length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <h3>Remote Participants ({Object.keys(stageParticipants).length})</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              {Object.entries(stageParticipants).map(([pid, streams]) => (
+                <div key={pid} style={{ width: 240 }}>
+                  <StageParticipantView participantId={pid} streams={streams} />
+                  <button
+                    style={{ marginTop: 4, width: '100%', fontSize: 12 }}
+                    onClick={() => kickParticipant(pid)}
+                  >
+                    Kick
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {Object.keys(stageParticipants).length === 0 && stageConnState === 'connected' && (
+          <p className="status" style={{ marginTop: 12 }}>
+            Connected. Waiting for other participants to join...
+          </p>
+        )}
+      </section>
 
       <footer className="status">Status: {status}</footer>
     </div>

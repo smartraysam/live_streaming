@@ -21,6 +21,7 @@ import (
 	"github.com/smartraysam/livestream-service/internal/payment"
 	"github.com/smartraysam/livestream-service/internal/recording"
 	"github.com/smartraysam/livestream-service/internal/session"
+	"github.com/smartraysam/livestream-service/internal/stage"
 	"github.com/smartraysam/livestream-service/internal/stream"
 	"github.com/smartraysam/livestream-service/internal/ticket"
 	"github.com/smartraysam/livestream-service/pkg/laravel"
@@ -67,6 +68,17 @@ func main() {
 		logger.Info().Msg("USE_MOCK_IVS enabled, skipping AWS IVS client")
 	}
 
+	// IVS Real-Time (Stages) client
+	var ivsRT stage.IVSRealTimeClient = &stage.MockIVSRealTime{}
+	if !cfg.UseMockIVS {
+		awsRT, rtErr := stage.NewAWSIVSRealTime(context.Background(), cfg.AWSRegion)
+		if rtErr != nil {
+			logger.Warn().Err(rtErr).Msg("failed to initialize AWS IVS Real-Time client, using mock")
+		} else {
+			ivsRT = awsRT
+		}
+	}
+
 	var eventPublisher events.Publisher = events.NoopPublisher{}
 	if cfg.SQSQueueURL != "" {
 		sqsPublisher, err := events.NewSQSPublisher(context.Background(), cfg.AWSRegion, cfg.AWSEndpointURL, cfg.SQSQueueURL)
@@ -90,6 +102,9 @@ func main() {
 	paymentH := payment.NewHandler(paymentSvc)
 	ticketH := ticket.NewHandler(ticketSvc)
 	recordingH := recording.NewHandler(cfg, recordingSvc, streamSvc, ticketSvc)
+	stageStore := stage.NewMemStore()
+	stageSvc := stage.NewService(stageStore, ivsRT)
+	stageH := stage.NewHandler(stageSvc)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Recoverer)
@@ -126,6 +141,15 @@ func main() {
 			protected.Get("/sessions/incoming", sessionH.IncomingInvites)
 			protected.Post("/sessions/{id}/accept", sessionH.AcceptInvite)
 			protected.Post("/sessions/{id}/decline", sessionH.DeclineInvite)
+
+			// ── IVS Real-Time Stages ──────────────────────────────────────
+			// 1-to-1 (CALL) and 1-to-many (BROADCAST) via WebRTC
+			protected.Get("/stages", stageH.ListMyStages)
+			protected.Post("/stages", stageH.CreateStage)
+			protected.Get("/stages/{id}", stageH.GetStage)
+			protected.Delete("/stages/{id}", stageH.EndStage)
+			protected.Post("/stages/{id}/join", stageH.JoinStage)
+			protected.Delete("/stages/{id}/participants/{pid}", stageH.DisconnectParticipant)
 		})
 	})
 
