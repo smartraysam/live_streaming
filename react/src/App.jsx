@@ -1237,14 +1237,7 @@ export default function App() {
             Auto-refresh viewer when LIVE
           </label>
         </div>
-        <div className="checklistList">
-          {checklist.map((item) => (
-            <div key={item.key} className={item.done ? 'checkItem done' : 'checkItem'}>
-              <strong>{item.done ? 'DONE' : 'TODO'}</strong>
-              <span>{item.label}</span>
-            </div>
-          ))}
-        </div>
+      
       </section>
 
 

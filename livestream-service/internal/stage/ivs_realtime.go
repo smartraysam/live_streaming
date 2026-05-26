@@ -2,13 +2,42 @@ package stage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsrt "github.com/aws/aws-sdk-go-v2/service/ivsrealtime"
 	rttypes "github.com/aws/aws-sdk-go-v2/service/ivsrealtime/types"
+	"github.com/aws/smithy-go"
 )
+
+// awsStageName sanitises a human-readable title so it satisfies the IVS
+// Real-Time Name constraint: ^[a-zA-Z0-9-_]*$, max 128 chars.
+var reInvalidName = regexp.MustCompile(`[^a-zA-Z0-9\-_]+`)
+
+func awsStageName(title string) string {
+	name := reInvalidName.ReplaceAllString(strings.TrimSpace(title), "_")
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	return name
+}
+
+// wrapAWSErr enriches AWS API errors with their type code and message so
+// "ValidationException:" (empty) becomes "ValidationException: <detail>".
+func wrapAWSErr(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		return fmt.Errorf("ivs-realtime %s: %s: %s", op, ae.ErrorCode(), ae.ErrorMessage())
+	}
+	return fmt.Errorf("ivs-realtime %s: %w", op, err)
+}
 
 // IVSRealTimeClient is the interface used by Service to talk to AWS IVS Real-Time.
 // Both AWSIVSRealTime (real) and MockIVSRealTime (test/local) implement it.
@@ -37,11 +66,14 @@ func NewAWSIVSRealTime(ctx context.Context, region string) (*AWSIVSRealTime, err
 }
 
 func (a *AWSIVSRealTime) CreateStage(ctx context.Context, title string) (string, error) {
-	out, err := a.client.CreateStage(ctx, &awsrt.CreateStageInput{
-		Name: &title,
-	})
+	name := awsStageName(title)
+	input := &awsrt.CreateStageInput{}
+	if name != "" {
+		input.Name = &name
+	}
+	out, err := a.client.CreateStage(ctx, input)
 	if err != nil {
-		return "", fmt.Errorf("ivs-realtime CreateStage: %w", err)
+		return "", wrapAWSErr("CreateStage", err)
 	}
 	return *out.Stage.Arn, nil
 }
@@ -49,7 +81,7 @@ func (a *AWSIVSRealTime) CreateStage(ctx context.Context, title string) (string,
 func (a *AWSIVSRealTime) DeleteStage(ctx context.Context, stageARN string) error {
 	_, err := a.client.DeleteStage(ctx, &awsrt.DeleteStageInput{Arn: &stageARN})
 	if err != nil {
-		return fmt.Errorf("ivs-realtime DeleteStage: %w", err)
+		return wrapAWSErr("DeleteStage", err)
 	}
 	return nil
 }
@@ -67,7 +99,7 @@ func (a *AWSIVSRealTime) CreateParticipantToken(
 		Duration:     &durationMin,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("ivs-realtime CreateParticipantToken: %w", err)
+		return nil, wrapAWSErr("CreateParticipantToken", err)
 	}
 	tok := out.ParticipantToken
 	capsStr := make([]string, len(caps))
@@ -90,7 +122,7 @@ func (a *AWSIVSRealTime) DisconnectParticipant(ctx context.Context, stageARN, pa
 		Reason:        &reason,
 	})
 	if err != nil {
-		return fmt.Errorf("ivs-realtime DisconnectParticipant: %w", err)
+		return wrapAWSErr("DisconnectParticipant", err)
 	}
 	return nil
 }

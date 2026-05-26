@@ -68,15 +68,19 @@ func main() {
 		logger.Info().Msg("USE_MOCK_IVS enabled, skipping AWS IVS client")
 	}
 
-	// IVS Real-Time (Stages) client
+	// IVS Real-Time (Stages) client — controlled by USE_MOCK_IVS_STAGE.
+	// Defaults to mock when USE_MOCK_IVS is also true, or when
+	// USE_MOCK_IVS_STAGE is explicitly set to true.
 	var ivsRT stage.IVSRealTimeClient = &stage.MockIVSRealTime{}
-	if !cfg.UseMockIVS {
+	if !cfg.UseMockIVS && !cfg.UseMockIVSStage {
 		awsRT, rtErr := stage.NewAWSIVSRealTime(context.Background(), cfg.AWSRegion)
 		if rtErr != nil {
 			logger.Warn().Err(rtErr).Msg("failed to initialize AWS IVS Real-Time client, using mock")
 		} else {
 			ivsRT = awsRT
 		}
+	} else {
+		logger.Info().Msg("IVS Real-Time stage client: using mock (USE_MOCK_IVS or USE_MOCK_IVS_STAGE=true)")
 	}
 
 	var eventPublisher events.Publisher = events.NoopPublisher{}

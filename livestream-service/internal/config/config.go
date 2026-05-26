@@ -16,6 +16,7 @@ type Config struct {
 	AWSEndpointURL        string
 	UseMemoryStore        bool
 	UseMockIVS            bool
+	UseMockIVSStage       bool
 	DynamoTableStreams    string
 	DynamoTableChat       string
 	DynamoTableTickets    string
@@ -54,6 +55,7 @@ func Load() (*Config, error) {
 		AWSEndpointURL:        viper.GetString("AWS_ENDPOINT_URL"),
 		UseMemoryStore:        viper.GetBool("USE_MEMORY_STORE"),
 		UseMockIVS:            viper.GetBool("USE_MOCK_IVS"),
+		UseMockIVSStage:       viper.GetBool("USE_MOCK_IVS_STAGE"),
 		DynamoTableStreams:    viper.GetString("DYNAMODB_TABLE_STREAMS"),
 		DynamoTableChat:       viper.GetString("DYNAMODB_TABLE_CHAT"),
 		DynamoTableTickets:    viper.GetString("DYNAMODB_TABLE_TICKETS"),
