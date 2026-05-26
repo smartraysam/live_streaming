@@ -42,3 +42,10 @@ type UpdateStreamRequest struct {
 type PlaybackResponse struct {
 	PlaybackURL string `json:"playback_url" example:"https://example.playback.m3u8"`
 }
+
+type IVSStatusResponse struct {
+	StreamID      string    `json:"stream_id" example:"1c95b9af-0f52-469b-9fa6-7d7375f26de8"`
+	ChannelARN    string    `json:"channel_arn" example:"arn:aws:ivs:us-east-1:123456789012:channel/abc"`
+	IsLive        bool      `json:"is_live" example:"true"`
+	LastCheckedAt time.Time `json:"last_checked_at" example:"2026-05-23T10:05:00Z"`
+}

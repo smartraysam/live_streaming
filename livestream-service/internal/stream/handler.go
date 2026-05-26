@@ -1,7 +1,9 @@
 package stream
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -175,6 +177,114 @@ func (h *Handler) GetIngestInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeData(w, http.StatusOK, ingest)
+}
+
+// GetIVSStatus returns whether IVS currently reports this channel as live.
+// @Summary      Get IVS channel status
+// @Description  Returns real-time IVS channel live state for creator-owned stream.
+// @Tags         Streams
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id   path      string  true  "Stream ID"
+// @Success      200  {object}  api.Response
+// @Failure      403  {object}  api.ErrorResponse
+// @Router       /streams/{id}/ivs-status [get]
+func (h *Handler) GetIVSStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.Get(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stream_not_found")
+		return
+	}
+
+	if user.UserID != st.CreatorID {
+		writeError(w, http.StatusForbidden, "only_creator_can_view_ivs_status")
+		return
+	}
+
+	status, err := h.svc.GetIVSStatus(r.Context(), streamID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeData(w, http.StatusOK, status)
+}
+
+// StartLiveBroadcast marks a stream as LIVE (creator only).
+// @Summary      Start live broadcast
+// @Description  Marks stream status as LIVE for creator-triggered broadcast start.
+// @Tags         Streams
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id   path      string  true  "Stream ID"
+// @Success      200  {object}  api.Response
+// @Failure      403  {object}  api.ErrorResponse
+// @Router       /streams/{id}/start-live [post]
+func (h *Handler) StartLiveBroadcast(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.SetStatus(r.Context(), streamID, user.UserID, "LIVE")
+	if err != nil {
+		if err.Error() == "only_creator_can_change_status" {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if _, err := h.syncStreamToLaravel(r.Context(), st); err != nil {
+		log.Printf("stream start sync warning: stream_id=%s err=%v", st.StreamID, err)
+	}
+
+	writeData(w, http.StatusOK, st)
+}
+
+// StopLiveBroadcast marks a stream as ENDED (creator only).
+// @Summary      Stop live broadcast
+// @Description  Marks stream status as ENDED for creator-triggered broadcast stop.
+// @Tags         Streams
+// @Security     BearerAuth
+// @Produce      json
+// @Param        id   path      string  true  "Stream ID"
+// @Success      200  {object}  api.Response
+// @Failure      403  {object}  api.ErrorResponse
+// @Router       /streams/{id}/stop-live [post]
+func (h *Handler) StopLiveBroadcast(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	streamID := chi.URLParam(r, "id")
+	st, err := h.svc.SetStatus(r.Context(), streamID, user.UserID, "ENDED")
+	if err != nil {
+		if err.Error() == "only_creator_can_change_status" {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if _, err := h.syncStreamToLaravel(r.Context(), st); err != nil {
+		log.Printf("stream stop sync warning: stream_id=%s err=%v", st.StreamID, err)
+	}
+
+	writeData(w, http.StatusOK, st)
 }
 
 // UpdateStream updates mutable stream fields.
@@ -367,7 +477,16 @@ func (h *Handler) SyncToLaravel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "only_creator_can_sync")
 		return
 	}
-	resp, err := h.laravel.SyncStream(r.Context(), laravel.SyncStreamRequest{
+	resp, err := h.syncStreamToLaravel(r.Context(), st)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "sync_failed")
+		return
+	}
+	writeData(w, http.StatusOK, resp)
+}
+
+func (h *Handler) syncStreamToLaravel(ctx context.Context, st *Stream) (*laravel.SyncStreamResponse, error) {
+	return h.laravel.SyncStream(ctx, laravel.SyncStreamRequest{
 		StreamID:       st.StreamID,
 		CreatorID:      st.CreatorID,
 		StreamType:     st.StreamType,
@@ -380,11 +499,6 @@ func (h *Handler) SyncToLaravel(w http.ResponseWriter, r *http.Request) {
 		Status:         st.Status,
 		CreatedAt:      st.CreatedAt,
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "sync_failed")
-		return
-	}
-	writeData(w, http.StatusOK, resp)
 }
 
 func writeData(w http.ResponseWriter, status int, data interface{}) {

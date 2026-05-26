@@ -45,6 +45,7 @@ func (s *Service) HandleEvent(ctx context.Context, ev IVSEvent) error {
 		"title":             st.Title,
 		"description":       st.Description,
 		"channel_arn":       st.ChannelARN,
+		"ingest_endpoint":   st.IngestEndpoint,
 		"playback_url":      st.PlaybackURL,
 		"stream_key_arn":    st.StreamKeyARN,
 		"is_paid":           st.IsPaid,

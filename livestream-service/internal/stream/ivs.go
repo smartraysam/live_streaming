@@ -2,12 +2,14 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsi "github.com/aws/aws-sdk-go-v2/service/ivs"
 	"github.com/aws/aws-sdk-go-v2/service/ivs/types"
+	"github.com/aws/smithy-go"
 	"github.com/google/uuid"
 )
 
@@ -93,13 +95,30 @@ func (a *AWSIVS) StopStream(ctx context.Context, channelARN string) error {
 	return nil
 }
 
+func (a *AWSIVS) IsChannelLive(ctx context.Context, channelARN string) (bool, error) {
+	_, err := a.client.GetStream(ctx, &awsi.GetStreamInput{ChannelArn: aws.String(channelARN)})
+	if err == nil {
+		return true, nil
+	}
+
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "ChannelNotBroadcasting", "ResourceNotFoundException":
+			return false, nil
+		}
+	}
+
+	return false, fmt.Errorf("check channel live state: %w", err)
+}
+
 func (m *MockIVS) CreateChannel(ctx context.Context, name, channelType string) (*IVSChannel, error) {
 	_ = ctx
 	id := uuid.NewString()
 	return &IVSChannel{
 		ChannelARN:     fmt.Sprintf("arn:aws:ivs:local:000000000000:channel/%s", id),
 		IngestEndpoint: fmt.Sprintf("%s.global-contribute.live-video.net", id),
-		PlaybackURL:    fmt.Sprintf("https://playback.local/%s.m3u8", id),
+		PlaybackURL:    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
 		StreamKeyARN:   fmt.Sprintf("arn:aws:ivs:local:000000000000:stream-key/%s", id),
 	}, nil
 }
@@ -119,4 +138,10 @@ func (m *MockIVS) StopStream(ctx context.Context, channelARN string) error {
 	_ = ctx
 	_ = channelARN
 	return nil
+}
+
+func (m *MockIVS) IsChannelLive(ctx context.Context, channelARN string) (bool, error) {
+	_ = ctx
+	_ = channelARN
+	return true, nil
 }

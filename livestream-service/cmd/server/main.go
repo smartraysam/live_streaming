@@ -105,7 +105,10 @@ func main() {
 		api.Group(func(protected chi.Router) {
 			protected.Use(authMW.Require)
 			protected.Post("/streams", streamH.CreateStream)
+			protected.Post("/streams/{id}/start-live", streamH.StartLiveBroadcast)
+			protected.Post("/streams/{id}/stop-live", streamH.StopLiveBroadcast)
 			protected.Get("/streams/{id}/ingest-info", streamH.GetIngestInfo)
+			protected.Get("/streams/{id}/ivs-status", streamH.GetIVSStatus)
 			protected.Get("/streams/{id}/playback", streamH.GetPlayback)
 			protected.Get("/streams/{id}/access", streamH.AccessCheck)
 			protected.Post("/streams/{id}/sync", streamH.SyncToLaravel)

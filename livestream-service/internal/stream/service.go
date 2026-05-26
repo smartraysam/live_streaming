@@ -180,6 +180,76 @@ func (s *Service) GetIngestInfo(ctx context.Context, streamID string) (*IngestIn
 	return &IngestInfo{IngestEndpoint: ingestEndpoint, StreamKey: streamKey}, nil
 }
 
+func (s *Service) SetStatus(ctx context.Context, streamID, requesterID, status string) (*Stream, error) {
+	st, err := s.Get(ctx, streamID)
+	if err != nil {
+		return nil, err
+	}
+
+	if requesterID != st.CreatorID {
+		return nil, fmt.Errorf("only_creator_can_change_status")
+	}
+
+	now := time.Now().UTC()
+	switch status {
+	case "LIVE":
+		isLive, err := s.channelIsLive(ctx, st.ChannelARN)
+		if err != nil {
+			return nil, err
+		}
+		if !isLive {
+			return nil, fmt.Errorf("ivs_channel_not_live_start_encoder")
+		}
+
+		st.Status = "LIVE"
+		st.StartedAt = now
+		if strings.HasPrefix(st.ChannelARN, "arn:aws:ivs:local:") && strings.Contains(st.PlaybackURL, "playback.local") {
+			st.PlaybackURL = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+		}
+	case "ENDED":
+		st.Status = "ENDED"
+		st.EndedAt = now
+	default:
+		return nil, fmt.Errorf("invalid_status")
+	}
+
+	if err := s.store.PutStream(ctx, streamID, toMap(st)); err != nil {
+		return nil, err
+	}
+
+	return st, nil
+}
+
+func (s *Service) GetIVSStatus(ctx context.Context, streamID string) (*IVSStatusResponse, error) {
+	st, err := s.Get(ctx, streamID)
+	if err != nil {
+		return nil, err
+	}
+
+	isLive, err := s.channelIsLive(ctx, st.ChannelARN)
+	if err != nil {
+		return nil, err
+	}
+
+	return &IVSStatusResponse{
+		StreamID:      st.StreamID,
+		ChannelARN:    st.ChannelARN,
+		IsLive:        isLive,
+		LastCheckedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Service) channelIsLive(ctx context.Context, channelARN string) (bool, error) {
+	if checker, ok := s.ivs.(interface {
+		IsChannelLive(context.Context, string) (bool, error)
+	}); ok {
+		return checker.IsChannelLive(ctx, channelARN)
+	}
+
+	// If IVS implementation does not expose live probing, avoid false positives.
+	return false, nil
+}
+
 func toMap(s *Stream) map[string]interface{} {
 	return map[string]interface{}{
 		"stream_id":         s.StreamID,

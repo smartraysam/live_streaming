@@ -124,6 +124,106 @@ small {
   margin: 0;
 }
 
+.checklistMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.statusPill.idle {
+  background: #475569;
+}
+
+.statusPill.live {
+  background: #dc2626;
+}
+
+.statusPill.unknown {
+  background: #7c3aed;
+}
+
+.checklistActions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.statusWarn {
+  margin: 0 0 8px;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.checklistList {
+  display: grid;
+  gap: 8px;
+}
+
+.actionRow {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.primaryAction {
+  background: linear-gradient(135deg, #ea580c, #f97316);
+}
+
+.primaryAction:hover {
+  filter: brightness(0.97);
+}
+
+.creatorAction {
+  background: linear-gradient(135deg, #b91c1c, #ef4444);
+}
+
+.viewerAction {
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+}
+
+.stopAction {
+  background: linear-gradient(135deg, #334155, #64748b);
+}
+
+.checkItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.checkItem strong {
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+}
+
+.checkItem.done {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.checkItem.done strong {
+  color: var(--ok);
+}
+
 .list {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -203,6 +303,52 @@ small {
   min-height: 320px;
 }
 
+.cameraPanel {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.studioGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.studioCard {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.studioCard h3 {
+  margin: 0 0 8px;
+  font-size: 0.98rem;
+}
+
+.creatorStudio {
+  border-color: #fca5a5;
+}
+
+.viewerStudio {
+  border-color: #93c5fd;
+}
+
+.creatorCameraVideo {
+  width: 100%;
+  max-height: 420px;
+  border-radius: 12px;
+  background: #111;
+  border: 1px solid #fca5a5;
+}
+
+.cameraActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .status {
   color: var(--muted);
   font-size: 0.95rem;
@@ -210,6 +356,18 @@ small {
 
 @media (max-width: 960px) {
   .grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .actionRow {
+    grid-template-columns: 1fr;
+  }
+
+  .cameraActions {
+    grid-template-columns: 1fr;
+  }
+
+  .studioGrid {
     grid-template-columns: 1fr;
   }
 }
