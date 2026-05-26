@@ -945,16 +945,6 @@ export default function App() {
       key: 'ivs-live',
       label: 'AWS IVS channel receiving ingest',
       done: ivsIsLive === true
-    },
-    {
-      key: 'one',
-      label: 'At least 1 viewer can watch',
-      done: Boolean(singleViewerResult?.ok)
-    },
-    {
-      key: 'many',
-      label: '1-to-many watch test passed',
-      done: multiViewerResults.length > 0 && multiViewerResults.every((item) => item.ok)
     }
   ];
 
@@ -964,63 +954,6 @@ export default function App() {
         <h1>Broadcast Channel Console</h1>
         <p>Create a livestream channel, start OBS broadcast, and validate one or many viewers.</p>
       </header>
-
-      <section className="panel">
-        <h2>Connection + Creator Identity</h2>
-        <label>JWT token (if ENABLE_AUTH=true)</label>
-        <input
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          placeholder="Paste bearer token"
-        />
-        <label>Creator user id</label>
-        <input
-          value={creatorId}
-          onChange={(event) => setCreatorId(event.target.value)}
-          placeholder="creator-1"
-        />
-        <label>Creator username</label>
-        <input
-          value={creatorName}
-          onChange={(event) => setCreatorName(event.target.value)}
-          placeholder="creator name"
-        />
-        <small>API base: {API_BASE}</small>
-      </section>
-
-      <section className="">
-        <div className="panel">
-          <h2>Choose Channel + Ingest</h2>
-          <p className="status">Select a stream below, then click Get Ingest Info.</p>
-          <div className="list">
-            {creatorStreams.map((stream) => (
-              <button
-                key={stream.stream_id}
-                className={selectedStream?.stream_id === stream.stream_id ? 'listItem selected' : 'listItem'}
-                onClick={() => selectAndLoadIngest(stream)}
-              >
-                <strong>{stream.title || '(untitled)'}</strong>
-                <span>{stream.stream_id}</span>
-                <span>status: {stream.status}</span>
-              </button>
-            ))}
-          </div>
-
-          <label>Selected stream id</label>
-          <input value={selectedStream?.stream_id || ''} readOnly placeholder="Select a stream" />
-          <button onClick={loadIngestForSelected}>Get Ingest Info</button>
-          {ingestError && <p className="statusWarn">Ingest error: {ingestError}</p>}
-
-          <label>Ingest endpoint</label>
-          <input value={ingestInfo?.ingest_endpoint || ''} readOnly placeholder="Load ingest info" />
-
-          <label>OBS server URL</label>
-          <input value={toRtmpsServer(ingestInfo?.ingest_endpoint)} readOnly placeholder="rtmps://.../app/" />
-
-          <label>Stream key</label>
-          <input value={ingestInfo?.stream_key || ''} readOnly placeholder="Load ingest info" />
-        </div>
-      </section>
 
       <section className="panel">
         <h2>Live Studio (Side By Side)</h2>
@@ -1052,44 +985,6 @@ export default function App() {
               <button onClick={launchViewerTab}>Open In New Tab</button>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section className="grid two">
-        <div className="panel">
-          <h2>3A. Watch As One Viewer</h2>
-          <label>Viewer id</label>
-          <input
-            value={singleViewerId}
-            onChange={(event) => setSingleViewerId(event.target.value)}
-            placeholder="viewer-1"
-          />
-          <button onClick={watchAsOne}>Run 1-to-1 Watch Flow</button>
-          {singleViewerResult && (
-            <pre className="jsonReport">{JSON.stringify(singleViewerResult, null, 2)}</pre>
-          )}
-        </div>
-
-        <div className="panel">
-          <h2>3B. Watch As Many Viewers</h2>
-          <label>Viewer ids (comma or newline separated)</label>
-          <textarea
-            value={multiViewerInput}
-            onChange={(event) => setMultiViewerInput(event.target.value)}
-            rows={5}
-            placeholder="viewer-2, viewer-3, viewer-4"
-          />
-          <button onClick={watchAsMany}>Run 1-to-Many Watch Flow</button>
-          {multiViewerResults.length > 0 && (
-            <div className="reportList">
-              {multiViewerResults.map((result) => (
-                <div key={result.viewer_id} className={result.ok ? 'resultOk' : 'resultFail'}>
-                  <strong>{result.viewer_id}</strong>
-                  <span>{result.ok ? 'can watch' : 'cannot watch'}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </section>
 
