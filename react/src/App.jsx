@@ -126,7 +126,7 @@ function sleep(ms) {
 // ──────────────────────────────────────────────────────────────────────────────
 // StageParticipantView – renders one remote participant's video/audio
 // ──────────────────────────────────────────────────────────────────────────────
-function StageParticipantView({ participantId, streams }) {
+function StageParticipantView({ participantId, streams, muted = false }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -151,9 +151,21 @@ function StageParticipantView({ participantId, streams }) {
   return (
     <div className="stageParticipant">
       <p className="participantLabel">{participantId}</p>
-      <video ref={videoRef} autoPlay playsInline style={{ width: '100%', borderRadius: 8, background: '#000' }} />
+      <video ref={videoRef} autoPlay playsInline muted={muted} style={{ width: '100%', borderRadius: 8, background: '#000' }} />
     </div>
   );
+}
+
+function applyTrackState(mediaStream, { videoEnabled = true, audioEnabled = true }) {
+  if (!mediaStream) {
+    return;
+  }
+  mediaStream.getVideoTracks().forEach((track) => {
+    track.enabled = videoEnabled;
+  });
+  mediaStream.getAudioTracks().forEach((track) => {
+    track.enabled = audioEnabled;
+  });
 }
 
 export default function App() {
@@ -198,7 +210,10 @@ export default function App() {
   const [status, setStatus] = useState('Ready.');
   const liveTriggerRef = useRef(false);
   const creatorVideoRef = useRef(null);
+  const rtCreatorVideoRef = useRef(null);
   const creatorStreamRef = useRef(null);
+  const rtGuestVideoRef = useRef(null);
+  const guestStreamRef = useRef(null);
   const viewerVideoRef = useRef(null);
   const broadcastClientRef = useRef(null);
   const isBrowserBroadcastingRef = useRef(false);
@@ -209,13 +224,40 @@ export default function App() {
   const [currentStage, setCurrentStage] = useState(null);   // backend Stage object
   const [stageConnState, setStageConnState] = useState('');  // 'connecting'|'connected'|'disconnected'
   const [stageParticipants, setStageParticipants] = useState({}); // { [pid]: streams[] }
+  const [rtViewerId, setRtViewerId] = useState('guest-rt-1');
+  const [rtViewerName, setRtViewerName] = useState('Guest');
+  const [viewerStageConnState, setViewerStageConnState] = useState('');
+  const [viewerStageParticipants, setViewerStageParticipants] = useState({});
+  const [rtCreatorSettings, setRtCreatorSettings] = useState({
+    muteAllGuests: false,
+    disableStageChat: false,
+    cameraEnabled: true,
+    muted: false,
+    overrideChatLock: true
+  });
+  const [rtGuestSettings, setRtGuestSettings] = useState({
+    muted: false,
+    cameraEnabled: true,
+    overrideCreatorSettings: false,
+    speakerMuted: false
+  });
+  const [rtGuestCameraError, setRtGuestCameraError] = useState('');
+  const [rtStageChatMessages, setRtStageChatMessages] = useState([]);
+  const [rtCreatorChatInput, setRtCreatorChatInput] = useState('');
+  const [rtGuestChatInput, setRtGuestChatInput] = useState('');
   const [stageError, setStageError] = useState('');
   const stageClientRef = useRef(null);  // IVS Stage SDK instance
+  const stageViewerClientRef = useRef(null);
 
   const creatorActor = useMemo(
     () => asActor(creatorId, 'creator', creatorName || creatorId),
     [creatorId, creatorName]
   );
+
+  const canGuestPublishVideo = currentStage?.mode === 'CALL' && rtGuestSettings.cameraEnabled;
+  const canGuestPublishAudio = currentStage?.mode === 'CALL' && !rtGuestSettings.muted && (!rtCreatorSettings.muteAllGuests || rtGuestSettings.overrideCreatorSettings);
+  const isCreatorChatDisabled = rtCreatorSettings.disableStageChat && !rtCreatorSettings.overrideChatLock;
+  const isGuestChatDisabled = rtCreatorSettings.disableStageChat && !rtGuestSettings.overrideCreatorSettings;
 
   async function requestWithStatus(path, options = {}, actor = null) {
     const headers = { ...(options.headers || {}) };
@@ -588,6 +630,56 @@ export default function App() {
     if (creatorVideoRef.current) {
       creatorVideoRef.current.srcObject = null;
     }
+    if (rtCreatorVideoRef.current) {
+      rtCreatorVideoRef.current.srcObject = null;
+    }
+  }
+
+  async function openGuestCameraScreen() {
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setRtGuestCameraError('Browser does not support camera access.');
+      return false;
+    }
+
+    try {
+      if (!guestStreamRef.current) {
+        guestStreamRef.current = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+      }
+      setRtGuestCameraError('');
+      return true;
+    } catch (error) {
+      setRtGuestCameraError(error?.message || 'Could not access guest camera device.');
+      return false;
+    }
+  }
+
+  function stopGuestCamera() {
+    if (guestStreamRef.current) {
+      guestStreamRef.current.getTracks().forEach((track) => track.stop());
+      guestStreamRef.current = null;
+    }
+    if (rtGuestVideoRef.current) {
+      rtGuestVideoRef.current.srcObject = null;
+    }
+  }
+
+  function sendRTStageChatMessage(author, body) {
+    const text = String(body || '').trim();
+    if (!text) {
+      return;
+    }
+    setRtStageChatMessages((prev) => ([
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        author,
+        body: text,
+        createdAt: new Date().toISOString()
+      }
+    ]));
   }
 
   function closeCreatorCameraScreen() {
@@ -612,12 +704,44 @@ export default function App() {
       if (!result.ok) throw new Error(result.error || `HTTP ${result.status}`);
       setCurrentStage(result.data);
       setStageParticipants({});
+      setViewerStageParticipants({});
+      setRtStageChatMessages([]);
       setStageConnState('');
+      setViewerStageConnState('');
       setStatus(`Stage "${result.data.title}" created. Click Join to connect.`);
     } catch (e) {
       setStageError(e.message);
       setStatus(`Create stage failed: ${e.message}`);
     }
+  }
+
+  function attachStageEventHandlers(stage, sdk, setConnState, setParticipants) {
+    stage.on(sdk.StageEvents.STAGE_CONNECTION_STATE_CHANGED, (state) => {
+      const label = String(state).toLowerCase();
+      setConnState(label);
+    });
+
+    stage.on(sdk.StageEvents.STAGE_PARTICIPANT_JOINED, (participant) => {
+      if (participant.isLocal) return;
+      setParticipants((prev) => ({ ...prev, [participant.id]: [] }));
+    });
+
+    stage.on(sdk.StageEvents.STAGE_PARTICIPANT_LEFT, (participant) => {
+      setParticipants((prev) => {
+        const next = { ...prev };
+        delete next[participant.id];
+        return next;
+      });
+    });
+
+    stage.on(sdk.StageEvents.STAGE_PARTICIPANT_STREAMS_ADDED, (participant, streams) => {
+      if (participant.isLocal) return;
+      setParticipants((prev) => ({ ...prev, [participant.id]: streams }));
+    });
+
+    stage.on(sdk.StageEvents.STAGE_PARTICIPANT_STREAMS_REMOVED, (participant) => {
+      setParticipants((prev) => ({ ...prev, [participant.id]: [] }));
+    });
   }
 
   async function joinRTStage() {
@@ -641,6 +765,10 @@ export default function App() {
         creatorStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       }
       const localMedia = creatorStreamRef.current;
+      applyTrackState(localMedia, {
+        videoEnabled: rtCreatorSettings.cameraEnabled,
+        audioEnabled: !rtCreatorSettings.muted
+      });
 
       const videoTrack = localMedia.getVideoTracks()[0];
       const audioTrack = localMedia.getAudioTracks()[0];
@@ -660,41 +788,70 @@ export default function App() {
       };
 
       const stage = new sdk.Stage(participantToken, strategy);
-
-      stage.on(sdk.StageEvents.STAGE_CONNECTION_STATE_CHANGED, (state) => {
-        const label = String(state).toLowerCase();
-        setStageConnState(label);
-        setStatus(`Stage connection: ${label}`);
-      });
-
-      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_JOINED, (participant) => {
-        if (participant.isLocal) return;
-        setStageParticipants((prev) => ({ ...prev, [participant.id]: [] }));
-      });
-
-      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_LEFT, (participant) => {
-        setStageParticipants((prev) => {
-          const next = { ...prev };
-          delete next[participant.id];
-          return next;
-        });
-      });
-
-      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_STREAMS_ADDED, (participant, streams) => {
-        if (participant.isLocal) return;
-        setStageParticipants((prev) => ({ ...prev, [participant.id]: streams }));
-      });
-
-      stage.on(sdk.StageEvents.STAGE_PARTICIPANT_STREAMS_REMOVED, (participant) => {
-        setStageParticipants((prev) => ({ ...prev, [participant.id]: [] }));
-      });
+      attachStageEventHandlers(stage, sdk, setStageConnState, setStageParticipants);
 
       setStatus('Connecting to stage...');
       await stage.join();
       stageClientRef.current = stage;
+      setStatus('Creator connected to stage.');
     } catch (e) {
       setStageError(e.message);
       setStatus(`Join stage failed: ${e.message}`);
+    }
+  }
+
+  async function joinRTStageAsViewer() {
+    const sdk = window.IVSBroadcastClient;
+    if (!sdk?.Stage) { setStageError('IVS Broadcast SDK not loaded. Refresh the page.'); return; }
+    if (!currentStage?.stage_id) { setStageError('Create a stage first.'); return; }
+    if (stageViewerClientRef.current) { setStageError('Viewer is already joined. Leave first.'); return; }
+
+    const viewer = asActor(rtViewerId.trim() || 'guest-rt-1', 'viewer', rtViewerName.trim() || 'Guest');
+
+    try {
+      setStageError('');
+      setStatus(`Fetching viewer token for ${viewer.user_id}...`);
+      const result = await requestWithStatus(`/stages/${currentStage.stage_id}/join`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      }, viewer);
+      if (!result.ok) throw new Error(result.error || `HTTP ${result.status}`);
+      const { token: participantToken } = result.data;
+
+      let localStreams = [];
+      if (currentStage?.mode === 'CALL') {
+        const guestReady = await openGuestCameraScreen();
+        if (!guestReady) {
+          throw new Error('guest_camera_stream_unavailable');
+        }
+        applyTrackState(guestStreamRef.current, {
+          videoEnabled: canGuestPublishVideo,
+          audioEnabled: canGuestPublishAudio
+        });
+        const guestVideoTrack = guestStreamRef.current?.getVideoTracks?.()[0];
+        const guestAudioTrack = guestStreamRef.current?.getAudioTracks?.()[0];
+        if (guestVideoTrack && canGuestPublishVideo) localStreams.push(new sdk.LocalStageStream(guestVideoTrack));
+        if (guestAudioTrack && canGuestPublishAudio) localStreams.push(new sdk.LocalStageStream(guestAudioTrack));
+      }
+
+      const strategy = {
+        stageStreamsToPublish() { return localStreams; },
+        shouldPublishParticipant() { return currentStage?.mode === 'CALL'; },
+        shouldSubscribeToParticipant(participant) {
+          return participant.isLocal ? sdk.SubscribeType.NONE : sdk.SubscribeType.AUDIO_VIDEO;
+        }
+      };
+
+      const stage = new sdk.Stage(participantToken, strategy);
+      attachStageEventHandlers(stage, sdk, setViewerStageConnState, setViewerStageParticipants);
+
+      setStatus(`Connecting guest ${viewer.user_id}...`);
+      await stage.join();
+      stageViewerClientRef.current = stage;
+      setStatus(`Guest ${viewer.user_id} connected to stage via WebRTC.`);
+    } catch (e) {
+      setStageError(e.message);
+      setStatus(`Guest join failed: ${e.message}`);
     }
   }
 
@@ -705,12 +862,24 @@ export default function App() {
     }
     setStageParticipants({});
     setStageConnState('disconnected');
-    setStatus('Left the stage.');
+    setStatus('Creator left the stage.');
+  }
+
+  async function leaveRTViewerStage() {
+    if (stageViewerClientRef.current) {
+      stageViewerClientRef.current.leave();
+      stageViewerClientRef.current = null;
+    }
+    setViewerStageParticipants({});
+    setViewerStageConnState('disconnected');
+    stopGuestCamera();
+    setStatus('Guest left the stage.');
   }
 
   async function endRTStage() {
     if (!currentStage?.stage_id) return;
     await leaveRTStage();
+    await leaveRTViewerStage();
     try {
       const result = await requestWithStatus(`/stages/${currentStage.stage_id}`, {
         method: 'DELETE'
@@ -1120,6 +1289,52 @@ export default function App() {
   }, [showCreatorCameraScreen, creatorStreamRef.current]);
 
   useEffect(() => {
+    if (!rtCreatorVideoRef.current) {
+      return;
+    }
+
+    if (!creatorStreamRef.current) {
+      rtCreatorVideoRef.current.srcObject = null;
+      return;
+    }
+
+    rtCreatorVideoRef.current.srcObject = creatorStreamRef.current;
+    rtCreatorVideoRef.current.play().catch(() => {
+      // autoplay can be blocked by browser policy; controls are still visible.
+    });
+  }, [showCreatorCameraScreen, creatorStreamRef.current, currentStage?.stage_id, stageConnState]);
+
+  useEffect(() => {
+    if (!rtGuestVideoRef.current) {
+      return;
+    }
+
+    if (!guestStreamRef.current) {
+      rtGuestVideoRef.current.srcObject = null;
+      return;
+    }
+
+    rtGuestVideoRef.current.srcObject = guestStreamRef.current;
+    rtGuestVideoRef.current.play().catch(() => {
+      // autoplay can be blocked by browser policy; controls are still visible.
+    });
+  }, [guestStreamRef.current, currentStage?.stage_id, viewerStageConnState]);
+
+  useEffect(() => {
+    applyTrackState(creatorStreamRef.current, {
+      videoEnabled: rtCreatorSettings.cameraEnabled,
+      audioEnabled: !rtCreatorSettings.muted
+    });
+  }, [rtCreatorSettings.cameraEnabled, rtCreatorSettings.muted]);
+
+  useEffect(() => {
+    applyTrackState(guestStreamRef.current, {
+      videoEnabled: canGuestPublishVideo,
+      audioEnabled: canGuestPublishAudio
+    });
+  }, [canGuestPublishVideo, canGuestPublishAudio]);
+
+  useEffect(() => {
     if (!viewerUseLocalPreview || !viewerVideoRef.current || !creatorStreamRef.current) {
       return;
     }
@@ -1132,7 +1347,16 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      if (stageClientRef.current) {
+        stageClientRef.current.leave();
+        stageClientRef.current = null;
+      }
+      if (stageViewerClientRef.current) {
+        stageViewerClientRef.current.leave();
+        stageViewerClientRef.current = null;
+      }
       void stopIvsBrowserBroadcast();
+      stopGuestCamera();
       stopCreatorCamera();
     };
   }, []);
@@ -1160,166 +1384,482 @@ export default function App() {
     }
   ];
 
+  const creatorRemoteCount = Object.keys(stageParticipants).length;
+  const guestRemoteCount = Object.keys(viewerStageParticipants).length;
+  const streamLibraryCount = creatorStreams.length;
+  const selectedStreamName = selectedStream?.title || selectedStream?.stream_id || 'No broadcast selected';
+  const selectedStreamType = selectedStream?.stream_type || 'broadcast';
+  const ingestReady = Boolean(ingestInfo?.ingest_endpoint && ingestInfo?.stream_key);
+  const broadcastMetrics = [
+    { label: 'Selected broadcast', value: selectedStreamName, tone: 'accent' },
+    { label: 'Broadcast status', value: streamStatus || 'UNKNOWN', tone: streamStatus === 'LIVE' ? 'live' : 'neutral' },
+    { label: 'IVS signal', value: ivsIsLive === null ? 'UNKNOWN' : ivsIsLive ? 'LIVE' : 'IDLE', tone: ivsIsLive ? 'live' : 'neutral' },
+    { label: 'Realtime peers', value: String(creatorRemoteCount + guestRemoteCount), tone: 'neutral' }
+  ];
+
   return (
     <div className="page">
-      <header className="hero">
-        <h1>Broadcast Channel Console</h1>
-        <p>Create a livestream channel, start OBS broadcast, and validate one or many viewers.</p>
+      <div className="ambientOrb ambientOrbA" />
+      <div className="ambientOrb ambientOrbB" />
+      <div className="ambientGrid" />
+
+      <header className="masthead panel">
+        <div className="mastheadCopy">
+          <span className="eyebrow">AllAccess Live Suite</span>
+          <h1>Broadcast and Realtime Control Room</h1>
+          <p>Operate HLS broadcast, stage-based video calling, viewer simulation, and session controls from one polished studio surface.</p>
+        </div>
+        <div className="heroMetrics">
+          {broadcastMetrics.map((metric) => (
+            <article key={metric.label} className={`metricCard ${metric.tone}`}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </article>
+          ))}
+        </div>
       </header>
 
-      <section className="panel">
-        <h2>Live Studio (Side By Side)</h2>
-        <p className="status">Creator broadcast view is on the left, user watch view is on the right.</p>
-        <div className="studioGrid">
-          <div className="studioCard creatorStudio">
-            <h3>Creator Broadcast View</h3>
-            {cameraError && <p className="statusWarn">Camera error: {cameraError}</p>}
-            <video ref={creatorVideoRef} className="creatorCameraVideo" autoPlay muted playsInline controls />
+      <div className="dashboardLayout">
+        <aside className="sideColumn">
+          <section className="panel railCard">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Producer Desk</span>
+                <h2>Identity and Channel Setup</h2>
+              </div>
+            </div>
+            <div className="formRow">
+              <label>Creator ID</label>
+              <input value={creatorId} onChange={(event) => setCreatorId(event.target.value)} placeholder="creator-1" />
+            </div>
+            <div className="formRow">
+              <label>Creator Name</label>
+              <input value={creatorName} onChange={(event) => setCreatorName(event.target.value)} placeholder="Creator" />
+            </div>
+            <div className="buttonStack">
+              <button className="primaryAction" onClick={createBroadcastChannel}>Create Broadcast Channel</button>
+              <button onClick={loadCreatorStreams}>Load Creator Library</button>
+              <button onClick={loadIngestForSelected} disabled={!selectedStream?.stream_id}>Load Ingest Credentials</button>
+            </div>
+            <div className="railMetaGrid">
+              <div>
+                <span>Library</span>
+                <strong>{streamLibraryCount}</strong>
+              </div>
+              <div>
+                <span>Type</span>
+                <strong>{selectedStreamType}</strong>
+              </div>
+              <div>
+                <span>Ingest</span>
+                <strong>{ingestReady ? 'READY' : 'WAITING'}</strong>
+              </div>
+              <div>
+                <span>Stage</span>
+                <strong>{currentStage?.mode || 'IDLE'}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel railCard">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Channel Library</span>
+                <h2>Available Broadcasts</h2>
+              </div>
+            </div>
+            <div className="list cinematicList">
+              {creatorStreams.length === 0 ? (
+                <div className="emptyStateCard">
+                  <strong>No channels loaded</strong>
+                  <span>Create or load creator streams to populate this list.</span>
+                </div>
+              ) : creatorStreams.map((stream) => (
+                <button
+                  key={stream.stream_id}
+                  className={`listItem ${selectedStream?.stream_id === stream.stream_id ? 'selected' : ''}`}
+                  onClick={() => setSelectedStream(stream)}
+                >
+                  <strong>{stream.title || stream.stream_id}</strong>
+                  <span>{stream.stream_type || 'broadcast'} · {String(stream.status || 'unknown').toUpperCase()}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel railCard">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Audience Simulation</span>
+                <h2>Viewer and Guest Checks</h2>
+              </div>
+            </div>
+            <div className="formRow">
+              <label>Primary Viewer ID</label>
+              <input value={singleViewerId} onChange={(event) => setSingleViewerId(event.target.value)} placeholder="viewer-1" />
+            </div>
+            <div className="formRow">
+              <label>Multi-viewer IDs</label>
+              <textarea value={multiViewerInput} onChange={(event) => setMultiViewerInput(event.target.value)} rows={4} placeholder="viewer-2, viewer-3, viewer-4" />
+            </div>
+            <div className="buttonStack">
+              <button className="viewerAction" onClick={watchAsOne}>Run Single Viewer Flow</button>
+              <button className="viewerAction" onClick={watchAsMany}>Run Multi-Viewer Flow</button>
+              <button onClick={getRecording}>Fetch Recording</button>
+            </div>
+            {recordingUrl && (
+              <div className="inlineInfoCard">
+                <span>Recording URL</span>
+                <strong>{recordingUrl}</strong>
+              </div>
+            )}
+          </section>
+
+          <section className="panel railCard">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Session Radar</span>
+                <h2>Current Readiness</h2>
+              </div>
+            </div>
+            <div className="checklistList">
+              {checklist.map((item) => (
+                <div key={item.key} className={`checkItem ${item.done ? 'done' : ''}`}>
+                  <strong>{item.done ? 'READY' : 'PENDING'}</strong>
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
+            {ingestReady && (
+              <div className="inlineInfoCard">
+                <span>RTMPS server</span>
+                <strong>{toRtmpsServer(ingestInfo?.ingest_endpoint)}</strong>
+              </div>
+            )}
+          </section>
+        </aside>
+
+        <main className="primaryColumn">
+          <section className="panel featurePanel">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Broadcast Studio</span>
+                <h2>Creator Uplink and Audience Playback</h2>
+              </div>
+            </div>
+            <p className="status">Creator broadcast view is on the left, audience watch view is on the right.</p>
+            <div className="studioGrid">
+              <div className="studioCard creatorStudio">
+                <div className="cardHeaderRow">
+                  <div>
+                    <h3>Creator Broadcast View</h3>
+                    <p>Local camera, ingest startup, and live control.</p>
+                  </div>
+                  <span className={`statusPill ${streamStatus === 'LIVE' ? 'live' : 'idle'}`}>{streamStatus || 'IDLE'}</span>
+                </div>
+                {cameraError && <p className="statusWarn">Camera error: {cameraError}</p>}
+                <video ref={creatorVideoRef} className="creatorCameraVideo" autoPlay muted playsInline controls />
+                <div className="cameraActions">
+                  <button className="primaryAction" onClick={openCreatorCameraScreen}>Enable Camera</button>
+                  <button className="creatorAction" onClick={startLiveBroadcast}>Start Live Broadcast</button>
+                  <button className="stopAction" onClick={stopLiveBroadcast}>Stop Live Broadcast</button>
+                </div>
+              </div>
+
+              <div className="studioCard viewerStudio">
+                <div className="cardHeaderRow">
+                  <div>
+                    <h3>Audience Watch View</h3>
+                    <p>Monitor playback URL and launch viewer verification.</p>
+                  </div>
+                  <span className={`statusPill ${watchLiveError ? 'idle' : 'live'}`}>{watchLiveError ? 'ATTN' : 'READY'}</span>
+                </div>
+                {watchLiveError && <p className="statusWarn">Watch error: {watchLiveError}</p>}
+                <label>User playback URL</label>
+                <input value={viewerPlaybackUrl} readOnly placeholder="Click Watch Live Broadcast" />
+                {viewerUseLocalPreview ? (
+                  <video ref={viewerVideoRef} className="creatorCameraVideo" autoPlay muted playsInline controls />
+                ) : (
+                  <VideoPlayer src={viewerPlaybackUrl || activePlaybackUrl} />
+                )}
+                <div className="cameraActions">
+                  <button className="viewerAction" onClick={watchLiveBroadcast}>Watch Live Broadcast</button>
+                  <button onClick={launchViewerTab}>Open In New Tab</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel featurePanel">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Monitoring</span>
+                <h2>Stream and IVS Signal Health</h2>
+              </div>
+            </div>
+            <div className="checklistMeta">
+              <span className={`statusPill ${streamStatus === 'LIVE' ? 'live' : 'idle'}`}>
+                Stream: {streamStatus || 'UNKNOWN'}
+              </span>
+              <span className={`statusPill ${ivsIsLive === true ? 'live' : ivsIsLive === false ? 'idle' : 'unknown'}`}>
+                IVS: {ivsIsLive === null ? 'UNKNOWN' : ivsIsLive ? 'LIVE' : 'IDLE'}
+              </span>
+              <span>Poll every {STREAM_STATUS_POLL_MS} ms</span>
+              <span>Last check: {lastStatusCheckAt || '-'}</span>
+              <span>IVS checked: {ivsLastCheckedAt || '-'}</span>
+            </div>
+            {statusPollError && <p className="statusWarn">Status error: {statusPollError}</p>}
+            {ivsStatusError && <p className="statusWarn">IVS status error: {ivsStatusError}</p>}
+            <div className="checklistActions controlStrip">
+              <button onClick={() => checkSelectedStreamStatus({ silent: false })}>Check Status Now</button>
+              <button onClick={() => checkSelectedIvsStatus({ silent: false })}>Check IVS Channel</button>
+              <label className="inlineCheck" htmlFor="auto-poll-status">
+                <input
+                  id="auto-poll-status"
+                  type="checkbox"
+                  checked={autoPollStatus}
+                  onChange={(event) => setAutoPollStatus(event.target.checked)}
+                />
+                Auto-poll stream status
+              </label>
+              <label className="inlineCheck" htmlFor="auto-refresh-live">
+                <input
+                  id="auto-refresh-live"
+                  type="checkbox"
+                  checked={autoRefreshOnLive}
+                  onChange={(event) => setAutoRefreshOnLive(event.target.checked)}
+                />
+                Auto-refresh viewer when LIVE
+              </label>
+            </div>
+          </section>
+
+          <section className="panel featurePanel stagePanel">
+            <div className="sectionHeading">
+              <div>
+                <span className="eyebrow">Realtime Stage</span>
+                <h2>Video Call Floor</h2>
+              </div>
+            </div>
+            <p className="status">
+              <strong>CALL</strong> = 1-to-1 (both publish + subscribe) &nbsp;|&nbsp;
+              <strong>BROADCAST</strong> = 1-to-many (host publishes, guests watch only via WebRTC)
+            </p>
+
+            {stageError && <p className="statusWarn">Stage error: {stageError}</p>}
+
+            <div className="stageConfigGrid">
+              <div className="formRow">
+                <label>Mode</label>
+                <select value={stageMode} onChange={(e) => setStageMode(e.target.value)}>
+                  <option value="CALL">CALL (1-to-1)</option>
+                  <option value="BROADCAST">BROADCAST (1-to-many)</option>
+                </select>
+              </div>
+              <div className="formRow">
+                <label>Title</label>
+                <input
+                  value={stageTitle}
+                  onChange={(e) => setStageTitle(e.target.value)}
+                  placeholder="Stage title"
+                />
+              </div>
+            </div>
+
             <div className="cameraActions">
-              <button className="primaryAction" onClick={openCreatorCameraScreen}>Enable Camera</button>
-              <button className="creatorAction" onClick={startLiveBroadcast}>Start Live Broadcast</button>
-              <button className="stopAction" onClick={stopLiveBroadcast}>Stop Live Broadcast</button>
+              <button className="primaryAction" onClick={createRTStage} disabled={!!currentStage}>
+                Create Stage
+              </button>
+              <button onClick={endRTStage} disabled={!currentStage}>
+                End Stage (host)
+              </button>
+            </div>
+
+            {currentStage && (
+              <div className="checklistMeta" style={{ marginTop: 8 }}>
+                <span><strong>Stage ID:</strong> {currentStage.stage_id}</span>
+                <span><strong>Mode:</strong> {currentStage.mode}</span>
+                <span className={`statusPill ${stageConnState === 'connected' || viewerStageConnState === 'connected' ? 'live' : 'idle'}`}>
+                  creator: {stageConnState || 'not joined'} / guest: {viewerStageConnState || 'not joined'}
+                </span>
+              </div>
+            )}
+
+            <div className="studioGrid" style={{ marginTop: 16 }}>
+          <div className="studioCard creatorStudio">
+            <h3>Creator View</h3>
+            <p className="status">Publishes camera + mic and subscribes to everyone else.</p>
+            <video
+              ref={rtCreatorVideoRef}
+              className="creatorCameraVideo"
+              autoPlay
+              muted
+              playsInline
+              controls
+            />
+            <div className="cameraActions">
+              <button className="primaryAction" onClick={openCreatorCameraScreen}>
+                Enable Camera Preview
+              </button>
+              <button
+                className="creatorAction"
+                onClick={joinRTStage}
+                disabled={!currentStage || !!stageClientRef.current}
+              >
+                Join as Creator
+              </button>
+              <button className="stopAction" onClick={leaveRTStage} disabled={!stageClientRef.current}>
+                Leave Creator
+              </button>
+            </div>
+            <div className="rtSettingsGrid">
+              <label className="inlineCheck"><input type="checkbox" checked={rtCreatorSettings.muteAllGuests} onChange={(event) => setRtCreatorSettings((prev) => ({ ...prev, muteAllGuests: event.target.checked }))} />Mute all guest audio</label>
+              <label className="inlineCheck"><input type="checkbox" checked={rtCreatorSettings.disableStageChat} onChange={(event) => setRtCreatorSettings((prev) => ({ ...prev, disableStageChat: event.target.checked }))} />Disable comment / chat</label>
+              <label className="inlineCheck"><input type="checkbox" checked={rtCreatorSettings.cameraEnabled} onChange={(event) => setRtCreatorSettings((prev) => ({ ...prev, cameraEnabled: event.target.checked }))} />Creator camera on</label>
+              <label className="inlineCheck"><input type="checkbox" checked={!rtCreatorSettings.muted} onChange={(event) => setRtCreatorSettings((prev) => ({ ...prev, muted: !event.target.checked }))} />Creator mic on</label>
+              <label className="inlineCheck"><input type="checkbox" checked={rtCreatorSettings.overrideChatLock} onChange={(event) => setRtCreatorSettings((prev) => ({ ...prev, overrideChatLock: event.target.checked }))} />Creator can override chat lock</label>
+            </div>
+            <div className="checklistMeta" style={{ marginTop: 8 }}>
+              <span><strong>Creator ID:</strong> {creatorActor.user_id}</span>
+              <span className={`statusPill ${stageConnState === 'connected' ? 'live' : 'idle'}`}>
+                {stageConnState || 'not joined'}
+              </span>
+            </div>
+
+            {Object.keys(stageParticipants).length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <h3>Creator Remote Participants ({Object.keys(stageParticipants).length})</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  {Object.entries(stageParticipants).map(([pid, streams]) => (
+                    <div key={pid} style={{ width: 240 }}>
+                      <StageParticipantView participantId={pid} streams={streams} muted={rtCreatorSettings.muteAllGuests} />
+                      <button
+                        style={{ marginTop: 4, width: '100%', fontSize: 12 }}
+                        onClick={() => kickParticipant(pid)}
+                      >
+                        Kick
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {Object.keys(stageParticipants).length === 0 && stageConnState === 'connected' && (
+              <p className="status" style={{ marginTop: 12 }}>
+                Creator connected. Waiting for participants...
+              </p>
+            )}
+
+            <div className="rtChatPanel">
+              <h3>Creator Comments / Chat</h3>
+              <div className="rtChatMessages">
+                {rtStageChatMessages.length === 0 ? <p className="status">No messages yet.</p> : rtStageChatMessages.map((message) => (
+                  <div key={message.id} className="rtChatMessage">
+                    <strong>{message.author}</strong>
+                    <span>{message.body}</span>
+                  </div>
+                ))}
+              </div>
+              <textarea value={rtCreatorChatInput} onChange={(event) => setRtCreatorChatInput(event.target.value)} placeholder="Creator message" disabled={isCreatorChatDisabled} />
+              <button className="creatorAction" onClick={() => { sendRTStageChatMessage(creatorActor.username || creatorActor.user_id, rtCreatorChatInput); setRtCreatorChatInput(''); }} disabled={isCreatorChatDisabled}>Send Creator Comment</button>
             </div>
           </div>
 
           <div className="studioCard viewerStudio">
-            <h3>User Watch View</h3>
-            {watchLiveError && <p className="statusWarn">Watch error: {watchLiveError}</p>}
-            <label>User playback URL</label>
-            <input value={viewerPlaybackUrl} readOnly placeholder="Click Watch Live Broadcast" />
-            {viewerUseLocalPreview ? (
-              <video ref={viewerVideoRef} className="creatorCameraVideo" autoPlay muted playsInline controls />
-            ) : (
-              <VideoPlayer src={viewerPlaybackUrl || activePlaybackUrl} />
-            )}
+            <h3>Guest Watch View (WebRTC)</h3>
+            <p className="status">Guest watches over WebRTC and, in CALL mode, can also publish local camera + mic.</p>
+            {rtGuestCameraError && <p className="statusWarn">Guest camera error: {rtGuestCameraError}</p>}
+            <video
+              ref={rtGuestVideoRef}
+              className="creatorCameraVideo"
+              autoPlay
+              muted
+              playsInline
+              controls
+            />
+            <div className="formRow">
+              <label>Guest ID</label>
+              <input
+                value={rtViewerId}
+                onChange={(e) => setRtViewerId(e.target.value)}
+                placeholder="guest-rt-1"
+              />
+            </div>
+            <div className="formRow">
+              <label>Guest Name</label>
+              <input
+                value={rtViewerName}
+                onChange={(e) => setRtViewerName(e.target.value)}
+                placeholder="Guest"
+              />
+            </div>
             <div className="cameraActions">
-              <button className="viewerAction" onClick={watchLiveBroadcast}>Watch Live Broadcast</button>
-              <button onClick={launchViewerTab}>Open In New Tab</button>
+              <button className="primaryAction" onClick={openGuestCameraScreen}>
+                Enable Guest Preview
+              </button>
+              <button
+                className="viewerAction"
+                onClick={joinRTStageAsViewer}
+                disabled={!currentStage || !!stageViewerClientRef.current}
+              >
+                Join as Guest (Watch)
+              </button>
+              <button className="stopAction" onClick={leaveRTViewerStage} disabled={!stageViewerClientRef.current}>
+                Leave Guest
+              </button>
             </div>
-          </div>
-        </div>
-      </section>
+            <div className="rtSettingsGrid">
+              <label className="inlineCheck"><input type="checkbox" checked={rtGuestSettings.cameraEnabled} onChange={(event) => setRtGuestSettings((prev) => ({ ...prev, cameraEnabled: event.target.checked }))} disabled={currentStage?.mode !== 'CALL'} />Guest camera on</label>
+              <label className="inlineCheck"><input type="checkbox" checked={!rtGuestSettings.muted} onChange={(event) => setRtGuestSettings((prev) => ({ ...prev, muted: !event.target.checked }))} disabled={currentStage?.mode !== 'CALL'} />Guest mic on</label>
+              <label className="inlineCheck"><input type="checkbox" checked={rtGuestSettings.speakerMuted} onChange={(event) => setRtGuestSettings((prev) => ({ ...prev, speakerMuted: event.target.checked }))} />Mute guest speakers</label>
+              <label className="inlineCheck"><input type="checkbox" checked={rtGuestSettings.overrideCreatorSettings} onChange={(event) => setRtGuestSettings((prev) => ({ ...prev, overrideCreatorSettings: event.target.checked }))} />Override creator restrictions</label>
+            </div>
+            <div className="checklistMeta" style={{ marginTop: 8 }}>
+              <span><strong>Guest ID:</strong> {rtViewerId || 'guest-rt-1'}</span>
+              <span className={`statusPill ${viewerStageConnState === 'connected' ? 'live' : 'idle'}`}>
+                {viewerStageConnState || 'not joined'}
+              </span>
+              <span>guest mode: {currentStage?.mode === 'CALL' ? 'publish + subscribe' : 'watch only'}</span>
+            </div>
 
-      <section className="panel">
-        <h2>Start Broadcast Checklist</h2>
-        <div className="checklistMeta">
-          <span className={`statusPill ${streamStatus === 'LIVE' ? 'live' : 'idle'}`}>
-            Stream: {streamStatus || 'UNKNOWN'}
-          </span>
-          <span className={`statusPill ${ivsIsLive === true ? 'live' : ivsIsLive === false ? 'idle' : 'unknown'}`}>
-            IVS: {ivsIsLive === null ? 'UNKNOWN' : ivsIsLive ? 'LIVE' : 'IDLE'}
-          </span>
-          <span>Poll every {STREAM_STATUS_POLL_MS} ms</span>
-          <span>Last check: {lastStatusCheckAt || '-'}</span>
-          <span>IVS checked: {ivsLastCheckedAt || '-'}</span>
-        </div>
-        {statusPollError && <p className="statusWarn">Status error: {statusPollError}</p>}
-        {ivsStatusError && <p className="statusWarn">IVS status error: {ivsStatusError}</p>}
-        <div className="checklistActions">
-          <button onClick={() => checkSelectedStreamStatus({ silent: false })}>Check Status Now</button>
-          <button onClick={() => checkSelectedIvsStatus({ silent: false })}>Check IVS Channel</button>
-          <label className="inlineCheck" htmlFor="auto-poll-status">
-            <input
-              id="auto-poll-status"
-              type="checkbox"
-              checked={autoPollStatus}
-              onChange={(event) => setAutoPollStatus(event.target.checked)}
-            />
-            Auto-poll stream status
-          </label>
-          <label className="inlineCheck" htmlFor="auto-refresh-live">
-            <input
-              id="auto-refresh-live"
-              type="checkbox"
-              checked={autoRefreshOnLive}
-              onChange={(event) => setAutoRefreshOnLive(event.target.checked)}
-            />
-            Auto-refresh viewer when LIVE
-          </label>
-        </div>
-      
-      </section>
-
-
-      <section className="panel">
-        <h2>Real-Time Video Call (IVS Stages)</h2>
-        <p className="status">
-          <strong>CALL</strong> = 1-to-1 (both publish + subscribe) &nbsp;|&nbsp;
-          <strong>BROADCAST</strong> = 1-to-many (host publishes, guests watch only via WebRTC)
-        </p>
-
-        {stageError && <p className="statusWarn">Stage error: {stageError}</p>}
-
-        <div className="formRow">
-          <label>Mode</label>
-          <select value={stageMode} onChange={(e) => setStageMode(e.target.value)}>
-            <option value="CALL">CALL (1-to-1)</option>
-            <option value="BROADCAST">BROADCAST (1-to-many)</option>
-          </select>
-        </div>
-        <div className="formRow">
-          <label>Title</label>
-          <input
-            value={stageTitle}
-            onChange={(e) => setStageTitle(e.target.value)}
-            placeholder="Stage title"
-          />
-        </div>
-
-        <div className="cameraActions">
-          <button className="primaryAction" onClick={createRTStage} disabled={!!currentStage}>
-            Create Stage
-          </button>
-          <button
-            className="creatorAction"
-            onClick={joinRTStage}
-            disabled={!currentStage || !!stageClientRef.current}
-          >
-            Join Stage
-          </button>
-          <button className="stopAction" onClick={leaveRTStage} disabled={!stageClientRef.current}>
-            Leave Stage
-          </button>
-          <button onClick={endRTStage} disabled={!currentStage}>
-            End Stage (host)
-          </button>
-        </div>
-
-        {currentStage && (
-          <div className="checklistMeta" style={{ marginTop: 8 }}>
-            <span><strong>Stage ID:</strong> {currentStage.stage_id}</span>
-            <span><strong>Mode:</strong> {currentStage.mode}</span>
-            <span className={`statusPill ${stageConnState === 'connected' ? 'live' : 'idle'}`}>
-              {stageConnState || 'not joined'}
-            </span>
-          </div>
-        )}
-
-        {Object.keys(stageParticipants).length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <h3>Remote Participants ({Object.keys(stageParticipants).length})</h3>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              {Object.entries(stageParticipants).map(([pid, streams]) => (
-                <div key={pid} style={{ width: 240 }}>
-                  <StageParticipantView participantId={pid} streams={streams} />
-                  <button
-                    style={{ marginTop: 4, width: '100%', fontSize: 12 }}
-                    onClick={() => kickParticipant(pid)}
-                  >
-                    Kick
-                  </button>
+            {Object.keys(viewerStageParticipants).length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <h3>Guest Remote Participants ({Object.keys(viewerStageParticipants).length})</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  {Object.entries(viewerStageParticipants).map(([pid, streams]) => (
+                    <div key={pid} style={{ width: 240 }}>
+                      <StageParticipantView participantId={pid} streams={streams} muted={rtGuestSettings.speakerMuted} />
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+            )}
+
+            {Object.keys(viewerStageParticipants).length === 0 && viewerStageConnState === 'connected' && (
+              <p className="status" style={{ marginTop: 12 }}>
+                Guest connected. Waiting for host/participants media...
+              </p>
+            )}
+
+            <div className="rtChatPanel">
+              <h3>Guest Comments / Chat</h3>
+              <div className="rtChatMessages">
+                {rtStageChatMessages.length === 0 ? <p className="status">No messages yet.</p> : rtStageChatMessages.map((message) => (
+                  <div key={message.id} className="rtChatMessage">
+                    <strong>{message.author}</strong>
+                    <span>{message.body}</span>
+                  </div>
+                ))}
+              </div>
+              <textarea value={rtGuestChatInput} onChange={(event) => setRtGuestChatInput(event.target.value)} placeholder="Guest message" disabled={isGuestChatDisabled} />
+              <button className="viewerAction" onClick={() => { sendRTStageChatMessage(rtViewerName || rtViewerId, rtGuestChatInput); setRtGuestChatInput(''); }} disabled={isGuestChatDisabled}>Send Guest Comment</button>
             </div>
           </div>
-        )}
-
-        {Object.keys(stageParticipants).length === 0 && stageConnState === 'connected' && (
-          <p className="status" style={{ marginTop: 12 }}>
-            Connected. Waiting for other participants to join...
-          </p>
-        )}
-      </section>
+        </div>
+          </section>
+        </main>
+      </div>
 
       <footer className="status">Status: {status}</footer>
     </div>
