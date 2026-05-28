@@ -165,6 +165,7 @@ Use this mode when you want to test the service and React sample without LocalSt
 ## API Documentation (Swagger)
 
 - UI: GET /docs/index.html
+- Local URL: http://localhost:8080/docs/index.html
 - Base path: /api/v1
 - Security: Bearer token in Authorization header for protected routes
 

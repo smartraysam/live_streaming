@@ -35,6 +35,8 @@ This repository contains a Go livestream backend service and a React sample clie
 
 See livestream-service/README.md for full backend details, environment variables, API endpoints, and Swagger usage.
 
+Swagger UI is available locally at http://localhost:8080/docs/index.html once the Go service is running.
+
 ## Frontend Docs
 
 See react-livestream-sample/README.md for full sample-app usage and private session flows.
