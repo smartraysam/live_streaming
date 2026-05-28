@@ -1769,15 +1769,19 @@ export default function App() {
           <div className="studioCard viewerStudio">
             <h3>Guest Watch View (WebRTC)</h3>
             <p className="status">Guest watches over WebRTC and, in CALL mode, can also publish local camera + mic.</p>
-            {rtGuestCameraError && <p className="statusWarn">Guest camera error: {rtGuestCameraError}</p>}
-            <video
-              ref={rtGuestVideoRef}
-              className="creatorCameraVideo"
-              autoPlay
-              muted
-              playsInline
-              controls
-            />
+            {Object.keys(viewerStageParticipants).length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <h3>Guest Remote Participants ({Object.keys(viewerStageParticipants).length})</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  {Object.entries(viewerStageParticipants).map(([pid, streams]) => (
+                    <div key={pid} style={{ width: 240 }}>
+                      <StageParticipantView participantId={pid} streams={streams} muted={rtGuestSettings.speakerMuted} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="formRow">
               <label>Guest ID</label>
               <input
@@ -1823,19 +1827,7 @@ export default function App() {
               <span>guest mode: {currentStage?.mode === 'CALL' ? 'publish + subscribe' : 'watch only'}</span>
             </div>
 
-            {Object.keys(viewerStageParticipants).length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <h3>Guest Remote Participants ({Object.keys(viewerStageParticipants).length})</h3>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                  {Object.entries(viewerStageParticipants).map(([pid, streams]) => (
-                    <div key={pid} style={{ width: 240 }}>
-                      <StageParticipantView participantId={pid} streams={streams} muted={rtGuestSettings.speakerMuted} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
+           
             {Object.keys(viewerStageParticipants).length === 0 && viewerStageConnState === 'connected' && (
               <p className="status" style={{ marginTop: 12 }}>
                 Guest connected. Waiting for host/participants media...
